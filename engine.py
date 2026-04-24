@@ -38,6 +38,22 @@ class ArbitrageEngine:
 
         return self.exchanges[ex_id]
 
+    def normalize_amount(self, exchange, symbol, base_amount):
+        """Translates a raw base token amount into the exchange's required format & precision."""
+        market = exchange.markets[symbol]
+        contract_size = market.get("contractSize")
+
+        # If contractSize exists, the exchange expects size in contracts.
+        if contract_size and contract_size > 0:
+            raw_amount = base_amount / contract_size
+        else:
+            # Exchange expects native base token sizing (e.g., Binance)
+            raw_amount = base_amount
+
+        # Let CCXT string-format the exact precision/decimal allowed by the exchange, then cast to float
+        formatted_amount = float(exchange.amount_to_precision(symbol, raw_amount))
+        return formatted_amount
+
     async def pre_warm(self):
         exchange_ids = {pos["long_ex"] for pos in self.positions.values()} | {
             pos["short_ex"] for pos in self.positions.values()
@@ -58,8 +74,14 @@ class ArbitrageEngine:
         log("Started WebSocket balance watcher.", ex_id)
         while True:
             try:
-                balance = await exchange.watch_balance()
+                # Force the await to yield every 300s to ensure the task isn't deadlocked by a dropped socket
+                balance = await asyncio.wait_for(
+                    exchange.watch_balance(), timeout=300.0
+                )
                 self.balances[ex_id]["USDT"] = balance.get("USDT", {}).get("free", 0)
+            except asyncio.TimeoutError:
+                # Expected behavior if no balance changes in 5 mins. Pass and re-await.
+                pass
             except Exception as e:
                 log(f"Balance watch error: {e}", ex_id)
                 await asyncio.sleep(5)
@@ -143,6 +165,7 @@ class ArbitrageEngine:
         ex_short = self.exchanges[short_ex_id]
 
         # 0ms RAM Preflight
+        exchange_amounts = {}
         for ex_id, ex in [(long_ex_id, ex_long), (short_ex_id, ex_short)]:
             market = ex.markets.get(symbol)
             if not market:
@@ -150,21 +173,28 @@ class ArbitrageEngine:
                     {"error": f"Market {symbol} not found on {ex_id}"}, status=400
                 )
 
-            # Safe parsing for min amount
+            # Normalize the human amount into exchange-specific format
+            safe_amount = self.normalize_amount(ex, symbol, amount)
+
+            # Safe parsing for min amount (CCXT stores this limit in whatever format the exchange expects)
             min_amount = market.get("limits", {}).get("amount", {}).get("min")
-            if min_amount is not None and amount < min_amount:
+            if min_amount is not None and safe_amount < min_amount:
                 return web.json_response(
                     {
-                        "error": f"Amount {amount} below min lot size {min_amount} on {ex_id}"
+                        "error": f"Calculated size {safe_amount} is below min lot size {min_amount} on {ex_id}"
                     },
                     status=400,
                 )
+            exchange_amounts[ex_id] = safe_amount
 
-        log(f"Preflight passed. Firing Market Orders for {amount} {symbol}...", "ENTRY")
+        log(
+            f"Preflight passed. Firing Market Orders for base amount {amount} {symbol}...",
+            "ENTRY",
+        )
 
         results = await asyncio.gather(
-            self.execute_order(ex_long, symbol, "buy", amount),
-            self.execute_order(ex_short, symbol, "sell", amount),
+            self.execute_order(ex_long, symbol, "buy", exchange_amounts[long_ex_id]),
+            self.execute_order(ex_short, symbol, "sell", exchange_amounts[short_ex_id]),
             return_exceptions=True,
         )
 
@@ -194,14 +224,24 @@ class ArbitrageEngine:
         elif success_long and not success_short:
             log(f"Short failed: {res_short}. Rolling back Long.", "CRITICAL")
             await self.execute_order(
-                ex_long, symbol, "sell", amount, params={"reduceOnly": True}
+                ex_long,
+                symbol,
+                "sell",
+                exchange_amounts[long_ex_id],
+                params={"reduceOnly": True},
             )
             return web.json_response(
                 {"error": f"Short failed: {res_short}. Long rolled back."}, status=500
             )
         elif success_short and not success_long:
             log(f"Long failed: {res_long}. Rolling back Short.", "CRITICAL")
-            await self.execute_order(ex_short, symbol, "buy", amount)
+            await self.execute_order(
+                ex_short,
+                symbol,
+                "buy",
+                exchange_amounts[short_ex_id],
+                params={"reduceOnly": True},
+            )
             return web.json_response(
                 {"error": f"Long failed: {res_long}. Short rolled back."}, status=500
             )
@@ -213,7 +253,6 @@ class ArbitrageEngine:
     async def handle_exit(self, request):
         data = await request.json()
         symbol = data["symbol"]
-
         pos = self.positions.get(symbol)
         if not pos:
             return web.json_response(
@@ -224,21 +263,34 @@ class ArbitrageEngine:
         ex_long = self.exchanges[pos["long_ex"]]
         ex_short = self.exchanges[pos["short_ex"]]
 
-        log(f"Firing Exit Orders for {amount} {symbol}...", "EXIT")
+        # Translate the saved Base Token amount back into exchange-specific exit sizes
+        exit_amount_long = self.normalize_amount(ex_long, symbol, amount)
+        exit_amount_short = self.normalize_amount(ex_short, symbol, amount)
+
+        log(
+            f"Firing Exit Orders for {amount} {symbol} (Base) | L: {exit_amount_long} S: {exit_amount_short}...",
+            "EXIT",
+        )
         results = await asyncio.gather(
             self.execute_order(
-                ex_long, symbol, "sell", amount, params={"reduceOnly": True}
+                ex_long, symbol, "sell", exit_amount_long, params={"reduceOnly": True}
             ),
             self.execute_order(
-                ex_short, symbol, "buy", amount, params={"reduceOnly": True}
+                ex_short, symbol, "buy", exit_amount_short, params={"reduceOnly": True}
             ),
             return_exceptions=True,
         )
 
         if any(isinstance(r, Exception) for r in results):
             log(f"Exit partially failed: {results}", "CRITICAL")
-            send_pushover(
-                "CRITICAL: EXIT FAILED", "Manual intervention required.", priority=2
+            # Fire and forget the sync request in a background thread so the event loop never pauses
+            asyncio.create_task(
+                asyncio.to_thread(
+                    send_pushover,
+                    "CRITICAL: EXIT FAILED",
+                    "Manual intervention required.",
+                    2,
+                )
             )
             return web.json_response({"error": "Exit failed. Check logs."}, status=500)
 
