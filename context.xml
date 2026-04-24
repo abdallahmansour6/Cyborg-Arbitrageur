@@ -1,0 +1,47 @@
+<!-- This is the context hierarchy. This document is meant to be laid out in a hierarchical/layered way where the upper/outermost nodes have more weight/more ingrained than the lower/innermost nodes (Weight Gradient). Moving inward acts as a semantic zoom; each child node reveals the granular, high-resolution expansion of its parent. [For 'Auto-update' mode only: It's intended to be used as a live document. Inner nodes are highly fluid, and as we operate more inward, you must be more reluctant to modify the upper/outer nodes. When updating the context tree, do not use temporal or conversational language (e.g., 'we decided', 'today', 'the user wants', 'next'). Write in declarative, representational facts]. Every context snapshot is a self-contained, stateless representation of the project, with no references to prior sessions or ongoing session-related states. If something is pending, incomplete, or unknown, do not use temporal language (e.g., 'we are deciding ...', 'Next, we will ....'); instead, use representative nodes/attributes to explicitly map things. We must maintain the tree's leanness. If something is implied by one of the overarching nodes/attributes, it shouldn't be defined downstream, or maybe even be included in the tree. -->
+<context>
+    I'm a 26-year-old software developer. I've taken an indefinite break from work to strengthen/explore myself, expand my interdisciplinary knowledge graph, and venture into solo projects. My design/architectonic ethos is to be lean, rapid, and iterative, so that I can touch and explore the widest possible set of solution spaces for whatever we are pursuing. We gotta be nimble and think outside the box to eliminate the ordinary clutter/overhead as much as possible, while crafting solid and reliable artifacts. We achieve this nimbleness by leveraging high-impact architectural/systemic decisions/actions before hitting diminishing returns, not by taking superficial trade-offs that degrade the clarity or solidity of our solutions.
+    
+    <project>
+        I'm exploring cross-exchange Crypto Perp-Perp funding rate arbitrage. My goal is to actively hunt and rotate capital into localized, extreme funding rate anomalies (e.g.,500% - 1000%+ APY) while maintaining strict delta-neutrality. 
+
+        <operational_model>
+            I approach this as a discretionary "Cyborg" Arbitrageur. I manually filter out micro-caps to avoid low-liquidity manipulation. I manually check for structural volatility events (token unlocks, mainnet launches) before deploying. I use Zeek.tools as my primary radar/scanner, cross-referenced with Coinglass and Velo Data. I strictly trade USDT-margined perpetual futures on both legs (e.g., Long Binance / Short Bybit, Long KuCoin / Short OKX) to bypass spot borrow costs and liquidity issues. I strictly avoid Inverse/Coin-margined perps to prevent non-linear payoff drift (Quanto risk). I deploy 100% of allocated capital (no idle stables). I cap leverage at 1x to 2x for natural liquidation buffers (95% to 45% distance).
+        </operational_model>
+
+        <risk_philosophy>
+            I accept the counterparty/exchange insolvency risks and recognize that this strategy has a scaling ceiling (slippage on larger capital sizes) which is irrelevant at my current $25k tier.
+        </risk_philosophy>
+
+        <system_architecture>
+            A custom, high-frequency, event-driven arbitrage system built with Python and CCXT Pro. Hosted on a Tokyo or Singapore VPS to achieve 5-15ms latency to exchange matching engines. The architecture strictly separates network-heavy preparation from microsecond execution via a unified stateful Engine and a lightweight IPC terminal.
+
+            <local_persistence>
+                <position_state format="JSON">A physical crash-recovery ledger mapping active pairs, base amounts, and assigned exchanges. Asynchronously written to by the Engine; acts strictly as a backup to the live RAM state.</position_state>
+                <transaction_log format="File">An OS-buffered, timestamped physical log recording execution parameters, API responses, and structural error events without blocking the event loop.</transaction_log>
+            </local_persistence>
+
+            <core_engine type="Always-On Async Process">
+                The monolithic state manager and execution processor. Maintains a local HTTP server (port 8080) to receive IPC commands, pre-loads exchange market rules into RAM, and holds persistent REST keep-alive and WebSocket streams to eliminate network round-trip bottlenecks.
+                <execution_routing>
+                    <transaction_safety>Performs 0ms pre-flight validation against RAM-cached limits and balances. If a dual-leg execution fractures, an automated inverse rollback is instantly fired on the surviving leg to guarantee absolute delta-neutrality.</transaction_safety>
+                </execution_routing>
+                <telemetry>
+                    Background asyncio tasks running within the same event loop.
+                    <risk_watchdog protocol="CCXT Pro WebSocket">Monitors margin ratios and position states. Executes instant unhedged-leg rollbacks on liquidation events to prevent naked directional exposure.</risk_watchdog>
+                    <yield_evasion protocol="REST Polling">Polls predicted funding rates to trigger preemptive dual-leg exits prior to unfavorable payout cycles.</yield_evasion>
+                </telemetry>
+            </core_engine>
+
+            <cli_terminal type="IPC Client">
+                A lightweight, stateless command-line interface acting as a "dumb terminal" to pass human-driven routing signals to the Core Engine.
+                <commands>
+                    <warmup>Accepts target symbol, exchanges, and leverage. Triggers the Engine to authenticate, download market rules to RAM, set leverage, and establish keep-alive connections prior to any execution pressure.</warmup>
+                    <entry>Accepts target symbol, exchanges, and exact base token amount. Triggers the Engine to fire concurrent REST market orders and map the position into RAM.</entry>
+                    <exit>Accepts target symbol. Triggers the Engine to lookup active exchanges and base token amounts from RAM, execute synchronized reduce-only flattening orders, and clear the state.</exit>
+                </commands>
+            </cli_terminal>
+
+        </system_architecture>
+    </project>
+</context>
