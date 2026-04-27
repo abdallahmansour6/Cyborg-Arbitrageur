@@ -15,7 +15,7 @@
         </risk_philosophy>
 
         <system_architecture>
-            A custom, high-frequency, event-driven arbitrage system built with Python and CCXT Pro. Hosted on a Tokyo or Singapore VPS to achieve 5-15ms latency to exchange matching engines. The architecture strictly separates network-heavy preparation from microsecond execution via a unified stateful Engine and a lightweight IPC terminal.
+            A custom, high-frequency, event-driven arbitrage system built with Python and CCXT Pro. Hosted on a Singapore VPS to optimize the geographic latency barycenter across 14 target Asian exchange matching engines. The architecture strictly separates network-heavy preparation from microsecond execution via a unified stateful Engine and a lightweight IPC terminal.
 
             <local_persistence>
                 <position_state format="JSON">A physical crash-recovery ledger mapping active pairs, base amounts, and assigned exchanges. Asynchronously written to by the Engine; acts strictly as a backup to the live RAM state.</position_state>
