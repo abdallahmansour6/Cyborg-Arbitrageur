@@ -1,93 +1,67 @@
 import asyncio
 from aiohttp import web
-import ccxt.async_support as ccxt_async
 from config import get_exchange
 from utils import log, load_state, save_state
 from notifier import send_pushover
+from execution import run_slicing_loop
+
+
+# Max wait for the first L2 snapshot to arrive after subscribing.
+# Sized for transcontinental WS handshake + initial snapshot fetch.
+FIRST_SNAPSHOT_TIMEOUT_S = 10.0
 
 
 class ArbitrageEngine:
     def __init__(self):
-        self.exchanges = {}
-        self.balances = {}
-        self.positions = load_state()
+        self.exchanges = {}        # ex_id -> CCXT Pro instance
+        self.order_books = {}      # (ex_id, symbol) -> latest L2 snapshot {bids, asks, timestamp}
+        self.positions = load_state()  # symbol -> {long_ex, short_ex, amount}
+        self._book_tasks = {}      # (ex_id, symbol) -> asyncio.Task (idempotency guard)
+        self._abort_events = {}    # symbol -> asyncio.Event. Presence => active slicing loop.
+                                   # Doubles as concurrent-execution guard for /entry and /exit.
 
     async def get_or_create_exchange(self, ex_id):
+        """Instantiate, load markets, start REST keep-alive. Idempotent."""
         if ex_id not in self.exchanges:
             log(f"Initializing {ex_id}...", ex_id)
             self.exchanges[ex_id] = get_exchange(ex_id)
             await self.exchanges[ex_id].load_markets()
-
-            try:
-                initial_balance = await self.exchanges[ex_id].fetch_balance()
-                self.balances[ex_id] = {
-                    "USDT": initial_balance.get("USDT", {}).get("free", 0)
-                }
-                log(
-                    f"Initial USDT Balance seeded: {self.balances[ex_id]['USDT']}",
-                    ex_id,
-                )
-            except Exception as e:
-                log(f"Failed to fetch initial balance: {e}", ex_id)
-                raise e
-
-            # Start WebSocket Listener
-            asyncio.create_task(self.watch_balance_loop(ex_id))
-            # Start REST Keep-Alive (Crucial for Latency)
             asyncio.create_task(self.rest_heartbeat_loop(ex_id))
-
         return self.exchanges[ex_id]
 
-    def normalize_amount(self, exchange, symbol, base_amount):
-        """Translates a raw base token amount into the exchange's required format & precision."""
-        market = exchange.markets[symbol]
-        contract_size = market.get("contractSize")
+    async def subscribe_order_book(self, ex_id, symbol):
+        """Idempotent. Spawns a watch_order_book streamer for (ex_id, symbol)."""
+        key = (ex_id, symbol)
+        if key in self._book_tasks and not self._book_tasks[key].done():
+            return
+        self._book_tasks[key] = asyncio.create_task(self.watch_order_book_loop(ex_id, symbol))
 
-        # If contractSize exists, the exchange expects size in contracts.
-        if contract_size and contract_size > 0:
-            raw_amount = base_amount / contract_size
-        else:
-            # Exchange expects native base token sizing (e.g., Binance)
-            raw_amount = base_amount
-
-        # Let CCXT string-format the exact precision/decimal allowed by the exchange, then cast to float
-        formatted_amount = float(exchange.amount_to_precision(symbol, raw_amount))
-        return formatted_amount
-
-    async def pre_warm(self):
-        exchange_ids = {pos["long_ex"] for pos in self.positions.values()} | {
-            pos["short_ex"] for pos in self.positions.values()
-        }
-
-        if exchange_ids:
-            log(
-                f"Pre-warming {len(exchange_ids)} exchanges from saved state...",
-                "ENGINE",
-            )
-            await asyncio.gather(
-                *(self.get_or_create_exchange(ex) for ex in exchange_ids)
-            )
-            log("Pre-warming complete. All systems hot.", "ENGINE")
-
-    async def watch_balance_loop(self, ex_id):
+    async def watch_order_book_loop(self, ex_id, symbol):
+        """
+        Persistent CCXT Pro watch_order_book stream. Updates the RAM cache on
+        every delta tick. Survives transient network errors via sleep-retry.
+        """
         exchange = self.exchanges[ex_id]
-        log("Started WebSocket balance watcher.", ex_id)
+        log(f"Started L2 stream for {symbol}.", ex_id)
         while True:
             try:
-                # Force the await to yield every 300s to ensure the task isn't deadlocked by a dropped socket
-                balance = await asyncio.wait_for(
-                    exchange.watch_balance(), timeout=300.0
+                # 300s ceiling on a single await guards against silent socket death:
+                # if no deltas arrive for 5 minutes the await is forced to yield
+                # and we re-enter watch_order_book, which will reconnect if needed.
+                book = await asyncio.wait_for(
+                    exchange.watch_order_book(symbol), timeout=300.0
                 )
-                self.balances[ex_id]["USDT"] = balance.get("USDT", {}).get("free", 0)
+                self.order_books[(ex_id, symbol)] = book
             except asyncio.TimeoutError:
-                # Expected behavior if no balance changes in 5 mins. Pass and re-await.
                 pass
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                log(f"Balance watch error: {e}", ex_id)
+                log(f"L2 stream error for {symbol}: {e}", ex_id)
                 await asyncio.sleep(5)
 
     async def rest_heartbeat_loop(self, ex_id):
-        """Keeps the REST HTTP/TLS socket hot to prevent 100ms connection drops."""
+        """Keeps REST HTTP/TLS socket hot to prevent ~100ms reconnect on first call."""
         exchange = self.exchanges[ex_id]
         log("Started REST heartbeat keep-alive.", ex_id)
         while True:
@@ -95,64 +69,128 @@ class ArbitrageEngine:
                 await asyncio.sleep(30)
                 await exchange.fetch_time()
             except Exception:
-                pass  # Ignore transient errors on heartbeat
+                pass
+
+    async def _await_first_snapshot(self, ex_id, symbol, timeout=FIRST_SNAPSHOT_TIMEOUT_S):
+        """Block until the L2 cache has its first snapshot for this pair."""
+        loop = asyncio.get_event_loop()
+        deadline = loop.time() + timeout
+        while (ex_id, symbol) not in self.order_books:
+            if loop.time() > deadline:
+                raise TimeoutError(
+                    f"L2 snapshot for {symbol} on {ex_id} not received within {timeout}s"
+                )
+            await asyncio.sleep(0.05)
+
+    async def pre_warm(self):
+        """
+        Crash-recovery boot: re-instantiate exchanges and re-subscribe L2 streams
+        for every symbol referenced in the saved position ledger.
+        """
+        if not self.positions:
+            return
+
+        ex_ids = {p["long_ex"] for p in self.positions.values()} | {
+            p["short_ex"] for p in self.positions.values()
+        }
+        log(f"Pre-warming {len(ex_ids)} exchanges from saved state...", "ENGINE")
+        await asyncio.gather(*(self.get_or_create_exchange(ex) for ex in ex_ids))
+
+        sub_tasks = []
+        for symbol, pos in self.positions.items():
+            for ex_id in (pos["long_ex"], pos["short_ex"]):
+                sub_tasks.append(self.subscribe_order_book(ex_id, symbol))
+        await asyncio.gather(*sub_tasks)
+        log("Pre-warming complete. All systems hot.", "ENGINE")
+
+    def normalize_amount(self, exchange, symbol, base_amount):
+        """Translate raw base token qty into exchange-specific contract+precision format."""
+        market = exchange.markets[symbol]
+        contract_size = market.get("contractSize")
+        if contract_size and contract_size > 0:
+            raw_amount = base_amount / contract_size
+        else:
+            raw_amount = base_amount
+        return float(exchange.amount_to_precision(symbol, raw_amount))
+
+    def _min_amount_in_base(self, ex_id, symbol):
+        """Min lot size expressed in base tokens (handles contractSize divergence)."""
+        market = self.exchanges[ex_id].markets[symbol]
+        raw_min = market.get("limits", {}).get("amount", {}).get("min") or 0
+        contract_size = market.get("contractSize") or 1
+        return raw_min * contract_size
+
+    # -------- IPC Handlers --------
 
     async def handle_warmup(self, request):
+        """
+        Authenticate, load markets, set leverage, subscribe L2 streams.
+        Blocks until the first L2 snapshot lands on every leg — /entry must
+        not race an empty RAM cache.
+        Payload: {symbol, exchanges: [...], leverage}
+        """
         data = await request.json()
-        symbol, exchanges, leverage = (
-            data["symbol"],
-            data["exchanges"],
-            data["leverage"],
-        )
+        symbol, exchanges, leverage = data["symbol"], data["exchanges"], data["leverage"]
         try:
-            tasks = []
-            for ex_id in exchanges:
-                ex = await self.get_or_create_exchange(ex_id)
-                tasks.append(ex.set_leverage(leverage, symbol))
+            # 1. Instantiate all exchanges concurrently (loads markets, spawns heartbeat)
+            await asyncio.gather(*(self.get_or_create_exchange(ex) for ex in exchanges))
 
-            log(
-                f"Setting leverage to {leverage}x for {symbol} on {exchanges}...",
-                "WARMUP",
+            # 2. Set leverage per exchange — audit silent per-venue failures
+            log(f"Setting leverage to {leverage}x for {symbol} on {exchanges}...", "WARMUP")
+            leverage_results = await asyncio.gather(
+                *(self.exchanges[ex].set_leverage(leverage, symbol) for ex in exchanges),
+                return_exceptions=True,
             )
-
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # Audit results for silent exchange-specific API failures
-            failed_exchanges = []
-            for ex_id, res in zip(exchanges, results):
+            failed = [
+                ex for ex, res in zip(exchanges, leverage_results)
+                if isinstance(res, Exception)
+            ]
+            for ex, res in zip(exchanges, leverage_results):
                 if isinstance(res, Exception):
-                    log(f"Leverage setup failed for {ex_id}: {res}", "WARMUP_ERROR")
-                    failed_exchanges.append(ex_id)
-
-            if failed_exchanges:
+                    log(f"Leverage setup failed for {ex}: {res}", "WARMUP_ERROR")
+            if failed:
                 return web.json_response(
-                    {"error": f"Warmup failed on {failed_exchanges}. Check logs."},
-                    status=400,
+                    {"error": f"Warmup failed on {failed}. Check logs."}, status=400
                 )
 
+            # 3. Subscribe L2 streams (idempotent — no-op if already streaming)
+            await asyncio.gather(
+                *(self.subscribe_order_book(ex, symbol) for ex in exchanges)
+            )
+
+            # 4. Block until first snapshot lands on each leg
+            log(f"Awaiting first L2 snapshot on {len(exchanges)} legs...", "WARMUP")
+            await asyncio.gather(
+                *(self._await_first_snapshot(ex, symbol) for ex in exchanges)
+            )
+
+            log(f"Warmup complete. {symbol} at {leverage}x on {exchanges} — books live.", "WARMUP")
             return web.json_response(
                 {"message": f"Warmup complete. {symbol} at {leverage}x on {exchanges}"}
             )
         except Exception as e:
+            log(f"Warmup structural failure: {e}", "WARMUP_ERROR")
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_entry(self, request):
+        """
+        Drives the Synchronized Smart Slicing entry sequence.
+        Payload: {symbol, long, short, amount, min_entry_basis_bps, max_duration_s}
+        """
         data = await request.json()
-        symbol, long_ex_id, short_ex_id, amount = (
-            data["symbol"],
-            data["long"],
-            data["short"],
-            data["amount"],
-        )
+        symbol = data["symbol"]
+        long_ex_id = data["long"]
+        short_ex_id = data["short"]
+        target_qty = data["amount"]
+        basis_floor_bps = data["min_entry_basis_bps"]
+        max_duration_s = data["max_duration_s"]
 
-        # Preflight Checks
+        # Existing position locks the routing — scale-ins must reuse the same legs
         if symbol in self.positions:
             pos = self.positions[symbol]
             if pos["long_ex"] != long_ex_id or pos["short_ex"] != short_ex_id:
                 return web.json_response(
-                    {
-                        "error": f"Active position uses {pos['long_ex']}/{pos['short_ex']}. Cannot mix exchanges."
-                    },
+                    {"error": f"Active position uses {pos['long_ex']}/{pos['short_ex']}. Cannot mix exchanges."},
                     status=400,
                 )
 
@@ -161,176 +199,189 @@ class ArbitrageEngine:
                 {"error": "Exchanges not warmed up. Run warmup first."}, status=400
             )
 
-        ex_long = self.exchanges[long_ex_id]
-        ex_short = self.exchanges[short_ex_id]
+        if (long_ex_id, symbol) not in self.order_books or (short_ex_id, symbol) not in self.order_books:
+            return web.json_response(
+                {"error": "L2 books not live. Run warmup first."}, status=400
+            )
 
-        # 0ms RAM Preflight
-        exchange_amounts = {}
-        for ex_id, ex in [(long_ex_id, ex_long), (short_ex_id, ex_short)]:
-            market = ex.markets.get(symbol)
-            if not market:
-                return web.json_response(
-                    {"error": f"Market {symbol} not found on {ex_id}"}, status=400
+        if symbol in self._abort_events:
+            return web.json_response(
+                {"error": f"Slicing loop already in flight for {symbol}. Abort it first."},
+                status=409,
+            )
+
+        abort_event = asyncio.Event()
+        self._abort_events[symbol] = abort_event
+        try:
+            filled, halt_reason = await run_slicing_loop(
+                self,
+                symbol,
+                long_ex_id,
+                short_ex_id,
+                target_qty,
+                basis_floor_bps,
+                max_duration_s,
+                side="entry",
+                abort_event=abort_event,
+            )
+        except Exception as e:
+            log(f"Structural failure during entry on {symbol}: {e}", "CRITICAL")
+            asyncio.create_task(
+                asyncio.to_thread(
+                    send_pushover,
+                    f"CRITICAL: ENTRY FAILED on {symbol}: {e}",
+                    "Manual intervention required.",
+                    2,
                 )
+            )
+            return web.json_response({"error": f"Entry failed: {e}"}, status=500)
+        finally:
+            self._abort_events.pop(symbol, None)
 
-            # Normalize the human amount into exchange-specific format
-            safe_amount = self.normalize_amount(ex, symbol, amount)
-
-            # Safe parsing for min amount (CCXT stores this limit in whatever format the exchange expects)
-            min_amount = market.get("limits", {}).get("amount", {}).get("min")
-            if min_amount is not None and safe_amount < min_amount:
-                return web.json_response(
-                    {
-                        "error": f"Calculated size {safe_amount} is below min lot size {min_amount} on {ex_id}"
-                    },
-                    status=400,
-                )
-            exchange_amounts[ex_id] = safe_amount
-
-        log(
-            f"Preflight passed. Firing Market Orders for base amount {amount} {symbol}...",
-            "ENTRY",
-        )
-
-        results = await asyncio.gather(
-            self.execute_order(ex_long, symbol, "buy", exchange_amounts[long_ex_id]),
-            self.execute_order(ex_short, symbol, "sell", exchange_amounts[short_ex_id]),
-            return_exceptions=True,
-        )
-
-        res_long, res_short = results
-        success_long = not isinstance(res_long, Exception)
-        success_short = not isinstance(res_short, Exception)
-
-        if success_long and success_short:
+        if filled > 0:
             if symbol in self.positions:
-                self.positions[symbol]["amount"] += amount
+                self.positions[symbol]["amount"] += filled
                 log(
-                    f"Scaled in. New total size: {self.positions[symbol]['amount']} {symbol}",
+                    f"Scaled in. New total: {self.positions[symbol]['amount']} {symbol} (halt={halt_reason})",
                     "ENTRY",
                 )
             else:
                 self.positions[symbol] = {
                     "long_ex": long_ex_id,
                     "short_ex": short_ex_id,
-                    "amount": amount,
+                    "amount": filled,
                 }
-                log(f"Delta Neutral established for {symbol}", "ENTRY")
-
-            save_state(self.positions)
-            return web.json_response({"message": "Entry successful."})
-
-        # Rollback Logic
-        elif success_long and not success_short:
-            log(f"Short failed: {res_short}. Rolling back Long.", "CRITICAL")
-            await self.execute_order(
-                ex_long,
-                symbol,
-                "sell",
-                exchange_amounts[long_ex_id],
-                params={"reduceOnly": True},
-            )
-            return web.json_response(
-                {"error": f"Short failed: {res_short}. Long rolled back."}, status=500
-            )
-        elif success_short and not success_long:
-            log(f"Long failed: {res_long}. Rolling back Short.", "CRITICAL")
-            await self.execute_order(
-                ex_short,
-                symbol,
-                "buy",
-                exchange_amounts[short_ex_id],
-                params={"reduceOnly": True},
-            )
-            return web.json_response(
-                {"error": f"Long failed: {res_long}. Short rolled back."}, status=500
-            )
+                log(
+                    f"Delta-neutral established for {symbol} at {filled} (halt={halt_reason})",
+                    "ENTRY",
+                )
+            await asyncio.to_thread(save_state, self.positions)
         else:
-            return web.json_response(
-                {"error": f"Both failed. L:{res_long} S:{res_short}"}, status=500
-            )
+            log(f"Entry filled 0/{target_qty} {symbol} (halt={halt_reason}). No state change.", "ENTRY")
+
+        return web.json_response({
+            "filled": filled,
+            "target": target_qty,
+            "halt_reason": halt_reason,
+        })
 
     async def handle_exit(self, request):
+        """
+        Drives the Synchronized Smart Slicing exit sequence (reduceOnly IOCs).
+        Payload: {symbol, amount, min_exit_basis_bps, max_duration_s}
+        """
         data = await request.json()
         symbol = data["symbol"]
+        target_qty = data["amount"]
+        basis_floor_bps = data["min_exit_basis_bps"]
+        max_duration_s = data["max_duration_s"]
+
         pos = self.positions.get(symbol)
         if not pos:
+            return web.json_response({"error": "No active position for this symbol."}, status=400)
+
+        long_ex_id, short_ex_id = pos["long_ex"], pos["short_ex"]
+        target_qty = min(target_qty, pos["amount"])
+
+        if symbol in self._abort_events:
             return web.json_response(
-                {"error": "No active position found for this symbol."}, status=400
+                {"error": f"Slicing loop already in flight for {symbol}. Abort it first."},
+                status=409,
             )
 
-        amount = pos["amount"]
-        ex_long = self.exchanges[pos["long_ex"]]
-        ex_short = self.exchanges[pos["short_ex"]]
-
-        # Translate the saved Base Token amount back into exchange-specific exit sizes
-        exit_amount_long = self.normalize_amount(ex_long, symbol, amount)
-        exit_amount_short = self.normalize_amount(ex_short, symbol, amount)
-
-        log(
-            f"Firing Exit Orders for {amount} {symbol} (Base) | L: {exit_amount_long} S: {exit_amount_short}...",
-            "EXIT",
+        # Defensive subscribe in case streams dropped between pre_warm and now
+        await asyncio.gather(
+            self.subscribe_order_book(long_ex_id, symbol),
+            self.subscribe_order_book(short_ex_id, symbol),
         )
-        results = await asyncio.gather(
-            self.execute_order(
-                ex_long, symbol, "sell", exit_amount_long, params={"reduceOnly": True}
-            ),
-            self.execute_order(
-                ex_short, symbol, "buy", exit_amount_short, params={"reduceOnly": True}
-            ),
-            return_exceptions=True,
-        )
+        try:
+            await asyncio.gather(
+                self._await_first_snapshot(long_ex_id, symbol, timeout=5.0),
+                self._await_first_snapshot(short_ex_id, symbol, timeout=5.0),
+            )
+        except TimeoutError as e:
+            return web.json_response({"error": f"Books not live: {e}"}, status=400)
 
-        if any(isinstance(r, Exception) for r in results):
-            log(f"Exit partially failed: {results}", "CRITICAL")
-            # Fire and forget the sync request in a background thread so the event loop never pauses
+        abort_event = asyncio.Event()
+        self._abort_events[symbol] = abort_event
+        try:
+            filled, halt_reason = await run_slicing_loop(
+                self,
+                symbol,
+                long_ex_id,
+                short_ex_id,
+                target_qty,
+                basis_floor_bps,
+                max_duration_s,
+                side="exit",
+                abort_event=abort_event,
+            )
+        except Exception as e:
+            log(f"Structural failure during exit on {symbol}: {e}", "CRITICAL")
             asyncio.create_task(
                 asyncio.to_thread(
                     send_pushover,
-                    "CRITICAL: EXIT FAILED",
+                    f"CRITICAL: EXIT FAILED on {symbol}: {e}",
                     "Manual intervention required.",
                     2,
                 )
             )
-            return web.json_response({"error": "Exit failed. Check logs."}, status=500)
+            return web.json_response({"error": f"Exit failed: {e}"}, status=500)
+        finally:
+            self._abort_events.pop(symbol, None)
 
-        del self.positions[symbol]
-        save_state(self.positions)
-        log(f"Position flattened for {symbol}", "EXIT")
-        return web.json_response({"message": "Exit successful."})
+        pos["amount"] -= filled
 
-    async def execute_order(
-        self, exchange, symbol, side, amount, params=None, max_retries=3
-    ):
-        """Executes a market order with transient network error handling."""
-        if params is None:
-            params = {}
+        # Dust check: residual below either leg's min lot size means we cannot
+        # legally trade it again — treat as flat and clear the ledger.
+        dust = max(
+            self._min_amount_in_base(long_ex_id, symbol),
+            self._min_amount_in_base(short_ex_id, symbol),
+        )
+        if pos["amount"] <= dust:
+            del self.positions[symbol]
+            log(f"Position flattened on {symbol} (residual {pos['amount']} <= dust {dust}).", "EXIT")
+        else:
+            log(f"Exit filled {filled}/{target_qty} {symbol}, residual {pos['amount']}.", "EXIT")
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                return await exchange.create_market_order(
-                    symbol, side, amount, params=params
-                )
-            except (
-                ccxt_async.NetworkError,
-                ccxt_async.RateLimitExceeded,
-                ccxt_async.RequestTimeout,
-            ) as e:
-                log(
-                    f"Transient error (Attempt {attempt}/{max_retries}): {e}",
-                    exchange.id,
-                )
-                if attempt == max_retries:
-                    raise e
-                await asyncio.sleep(0.1)  # 100ms micro-pause before retry
-            except Exception as e:
-                log(f"Structural error: {e}", exchange.id)
-                raise e
+        await asyncio.to_thread(save_state, self.positions)
+
+        return web.json_response({
+            "filled": filled,
+            "target": target_qty,
+            "remaining": self.positions.get(symbol, {}).get("amount", 0),
+            "halt_reason": halt_reason,
+        })
+
+    async def handle_abort(self, request):
+        """
+        Signals a graceful halt to an in-flight slicing loop for `symbol`.
+        The loop will exit at its next cycle boundary — never mid-IOC, so
+        delta-neutrality is preserved. Already-filled qty is kept as a hedged
+        position via the normal entry/exit completion path.
+        Payload: {symbol}
+        """
+        data = await request.json()
+        symbol = data["symbol"]
+        event = self._abort_events.get(symbol)
+        if event is None:
+            return web.json_response(
+                {"error": f"No active slicing loop for {symbol}."}, status=404
+            )
+        event.set()
+        log(f"Abort signaled for {symbol}. Loop will halt at next cycle boundary.", "ABORT")
+        return web.json_response(
+            {"message": f"Abort signaled for {symbol}. Halting at next cycle boundary."}
+        )
 
     async def shutdown(self):
-        """Gracefully closes all exchange sockets on exit."""
+        """Cancel streamers and close all CCXT sockets."""
         log("Shutting down exchange connections...", "ENGINE")
-        await asyncio.gather(*(ex.close() for ex in self.exchanges.values()))
+        for task in self._book_tasks.values():
+            task.cancel()
+        await asyncio.gather(
+            *(ex.close() for ex in self.exchanges.values()), return_exceptions=True
+        )
 
 
 async def start_server():
@@ -341,6 +392,7 @@ async def start_server():
     app.router.add_post("/warmup", engine.handle_warmup)
     app.router.add_post("/entry", engine.handle_entry)
     app.router.add_post("/exit", engine.handle_exit)
+    app.router.add_post("/abort", engine.handle_abort)
 
     runner = web.AppRunner(app)
     await runner.setup()

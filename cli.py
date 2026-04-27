@@ -56,18 +56,49 @@ if __name__ == "__main__":
     )
     parser_warmup.add_argument("--leverage", type=int, required=True)
 
-    # ENTRY COMMAND (Network Light - Instant Execution with explicit routing)
+    # ENTRY COMMAND (Drives Synchronized Smart Slicing on the Engine)
     parser_entry = subparsers.add_parser("entry")
     parser_entry.add_argument("--symbol", required=True)
     parser_entry.add_argument("--long", required=True)
     parser_entry.add_argument("--short", required=True)
     parser_entry.add_argument(
-        "--amount", type=float, required=True, help="Exact base token amount"
+        "--amount", type=float, required=True, help="Target base token amount"
+    )
+    parser_entry.add_argument(
+        "--min-entry-basis-bps",
+        type=float,
+        required=True,
+        help="Net basis floor (bps). Slices below this are not dispatched.",
+    )
+    parser_entry.add_argument(
+        "--max-duration-s",
+        type=float,
+        required=True,
+        help="Hard wall-clock deadline. Partial fills are kept as a hedged position.",
     )
 
-    # EXIT COMMAND (Network Light - Instant Execution via state lookup)
+    # EXIT COMMAND (Drives reduceOnly Synchronized Smart Slicing on the Engine)
     parser_exit = subparsers.add_parser("exit")
     parser_exit.add_argument("--symbol", required=True)
+    parser_exit.add_argument(
+        "--amount", type=float, required=True, help="Base token amount to unwind"
+    )
+    parser_exit.add_argument(
+        "--min-exit-basis-bps",
+        type=float,
+        required=True,
+        help="Net basis floor (bps) for unwind. Captures convergence.",
+    )
+    parser_exit.add_argument(
+        "--max-duration-s",
+        type=float,
+        required=True,
+        help="Hard wall-clock deadline. Residual stays as a hedged position.",
+    )
+
+    # ABORT COMMAND (Signals graceful halt of an in-flight slicing loop)
+    parser_abort = subparsers.add_parser("abort")
+    parser_abort.add_argument("--symbol", required=True)
 
     args = parser.parse_args()
 

@@ -1,3 +1,4 @@
+<!-- This is the context hierarchy. This document is meant to be laid out in a hierarchical/layered way where the upper/outermost nodes have more weight/more ingrained than the lower/innermost nodes (Weight Gradient). Moving inward acts as a semantic zoom; each child node reveals the granular, high-resolution expansion of its parent. [For 'Auto-update' mode only: It's intended to be used as a live document. Inner nodes are highly fluid, and as we operate more inward, you must be more reluctant to modify the upper/outer nodes. When updating the context tree, do not use temporal or conversational language (e.g., 'we decided', 'today', 'the user wants', 'next'). Write in declarative, representational facts]. Every context snapshot is a self-contained, stateless representation of the project, with no references to prior sessions or ongoing session-related states. If something is pending, incomplete, or unknown, do not use temporal language (e.g., 'we are deciding ...', 'Next, we will ....'); instead, use representative nodes/attributes to explicitly map things. We must maintain the tree's leanness. If something is implied by one of the overarching nodes/attributes, it shouldn't be defined downstream, or maybe even be included in the tree. -->
 <context>
     I'm a 26-year-old software developer. I've taken an indefinite break from work to strengthen/explore myself, expand my interdisciplinary knowledge graph, and venture into solo projects. My design/architectonic ethos is to be lean, rapid, and iterative, so that I can touch and explore the widest possible set of solution spaces for whatever we are pursuing. We gotta be nimble and think outside the box to eliminate the ordinary clutter/overhead as much as possible, while crafting solid and reliable artifacts. We achieve this nimbleness by leveraging high-impact architectural/systemic decisions/actions before hitting diminishing returns, not by taking superficial trade-offs that degrade the clarity or solidity of our solutions.
     
@@ -5,7 +6,8 @@
         I'm exploring cross-exchange Crypto Perp-Perp funding rate arbitrage. My goal is to actively hunt and rotate capital into localized, extreme funding rate anomalies (e.g., 500% - 1000%+ APY) while maintaining strict delta-neutrality. 
 
         <operational_model>
-            I approach this as a discretionary "Cyborg" Arbitrageur. I manually filter out micro-caps to avoid low-liquidity manipulation. I manually evaluate the viability of an anomaly using a strict "Breakeven Epochs" calculation (Total Projected Basis Cost + Total Taker Fees / Epoch Yield) to determine if the anomaly's lifespan justifies the deployment. I use Zeek.tools as my primary radar/scanner, cross-referenced with Coinglass and Velo Data. I strictly trade USDT-margined perpetual futures on both legs (e.g., Long Binance / Short Bybit, Long KuCoin / Short OKX) to bypass spot borrow costs and liquidity issues. I strictly avoid Inverse/Coin-margined perps to prevent non-linear payoff drift (Quanto risk). I deploy 100% of allocated capital (no idle stables). I cap leverage at 1x to 2x for natural liquidation buffers (95% to 45% distance).
+            I approach this as a discretionary "Cyborg" Arbitrageur. I manually filter out micro-caps to avoid low-liquidity manipulation. I manually evaluate the viability of an anomaly using a strict "Breakeven Epochs" calculation (Total Projected Basis Cost + Total Taker Fees / Epoch Yield) to determine if the anomaly's lifespan justifies the deployment. I use Zeek.tools as my primary radar/scanner, cross-referenced with Coinglass and Velo Data. I strictly trade USDT-margined perpetual futures on both legs (e.g., Long Binance / Short Bybit, Long KuCoin / Short OKX) to bypass spot borrow costs and liquidity issues. I strictly avoid Inverse/Coin-margined perps to prevent non-linear payoff drift (Quanto risk). I deploy 100% of allocated capital (no idle stables). I cap leverage at 1x to 2x for natural liquidation buffers (95% to 45% distance). I utilize a "Sip and Evaluate" execution workflow. I treat `--min-*-basis-bps` as a discretionary live knob: I fire with a tight floor, observe fill velocity in the engine console, and abort+retune+re-fire if the basis proves too tight against the trade's viable window or too loose against the captured edge.
+
         </operational_model>
 
         <risk_philosophy>
@@ -21,7 +23,7 @@
             </local_persistence>
 
             <core_engine type="Always-On Async Process">
-                The monolithic state manager and execution processor. Maintains a local HTTP server (port 8080) to receive IPC commands, pre-loads exchange market rules into RAM, and holds persistent REST keep-alive connections. Maintains real-time WebSocket streams for `watch_order_book` to enable 0ms local dual-L2 cache reads during execution.
+                The monolithic state manager and execution processor. Maintains a local HTTP server (port 8080) to receive IPC commands, pre-loads exchange market rules into RAM, and holds persistent REST keep-alive connections. Maintains real-time WebSocket streams for `watch_order_book` to enable 0ms local dual-L2 cache reads during execution. Enforces a strict single-active-slicing-loop invariant per symbol: any concurrent entry/exit attempt against an already-executing symbol is rejected, eliminating state-mutation races on the position ledger and providing the natural addressing for abort signals.
 
                 <execution_routing architecture="Synchronized Smart Slicing">
                     Execution operates as a genuine two-book arbitrage processor. Both legs are treated as equal constraints. The engine dynamically subdivides large notional targets into slices based on real-time order book depth to execute concurrent, delta-neutral takers.
@@ -46,7 +48,7 @@
                     </leg_synchronization_recovery>
 
                     <iterative_slicing_loop>
-                        The execution engine runs a continuous slicing loop that evaluates the order books, dispatches IOC slices, and enforces imbalance recovery. After each cycle, the loop yields briefly to the event loop (e.g., 1-2 seconds) to allow high-frequency market makers to replenish the consumed liquidity. This cycle adapts dynamically to the market's heartbeat—firing larger slices when liquidity is thick, and smaller slices when it is thin. The slicing loop halts gracefully when the total target notional is fully deployed, or when the `--max-duration-s` deadline expires. If the deadline is reached, the engine ceases execution immediately; the accumulated, partially filled quantity is preserved as a valid, perfectly hedged position, ensuring that time-pressure never forces a yield-destroying slippage event.
+                        The execution engine runs a continuous slicing loop that evaluates the order books, dispatches IOC slices, and enforces imbalance recovery. After each cycle, the loop yields briefly to the event loop (e.g., 1-2 seconds) to allow high-frequency market makers to replenish the consumed liquidity. This cycle adapts dynamically to the market's heartbeat—firing larger slices when liquidity is thick, and smaller slices when it is thin. The slicing loop halts gracefully on any of: total target notional fully deployed, `--max-duration-s` deadline expiry, operator-issued abort signal, or remaining residual falling below the per-leg dust floor (no longer tradeable). If the deadline is reached, the engine ceases execution immediately; the accumulated, partially filled quantity is preserved as a valid, perfectly hedged position, ensuring that time-pressure never forces a yield-destroying slippage event.
                     </iterative_slicing_loop>
                 </execution_routing>
 
@@ -73,7 +75,12 @@
                         Unwinds an active dual-leg position. 
                         Format: `exit --symbol {market} --amount {base_qty} --min-exit-basis-bps {floor} --max-duration-s {seconds}`
                         Logic: Reverses the directional routing of `<entry>`. The engine evaluates the real-time order books, dispatching synchronized reduce-only IOC slices strictly when the projected exit basis mathematically satisfies or exceeds the `--min-exit-basis-bps` floor. It flattens residual imbalances instantly and clears the RAM state upon successful depletion.
-                        </exit>
+                    </exit>
+                    <abort>
+                            Signals a graceful halt to an in-flight slicing loop.
+                            Format: `abort --symbol {market}`
+                            Logic: The engine breaks the loop at the next cycle boundary — never mid-IOC — preserving accumulated fills as a perfectly hedged position. The daemon, RAM state, and WebSocket streams remain hot for immediate re-engagement.
+                    </abort>
                     </commands>
                 </cli_terminal>
 
