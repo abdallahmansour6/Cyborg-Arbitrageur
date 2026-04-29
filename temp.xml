@@ -1,0 +1,129 @@
+<context>
+    I'm a 26-year-old software developer. I've taken an indefinite break from work to strengthen/explore myself, expand my interdisciplinary knowledge graph, and venture into solo projects. My design/architectonic ethos is to be lean, rapid, and iterative, so that I can touch and explore the widest possible set of solution spaces for whatever we are pursuing. We gotta be nimble and think outside the box to eliminate the ordinary clutter/overhead as much as possible, while crafting solid and reliable artifacts. We achieve this nimbleness by leveraging high-impact architectural/systemic decisions/actions before hitting diminishing returns, not by taking superficial trade-offs that degrade the clarity or solidity of our solutions.
+    <project name="Funding-Rate Scanner and Anomaly-Lifecycle Corpus">
+
+        <mission>
+        A proprietary funding-rate scanner and anomaly-lifecycle corpus for
+        cross-exchange Crypto Perp-Perp arbitrage. An analytical-first companion
+        to a future execution engine: its job is to discover, record, and
+        characterize funding anomalies across venues so that downstream
+        calibration (Breakeven Epochs, spread-decay profiles, persistence
+        statistics) has a ground-truth dataset to learn from.
+        </mission>
+
+        <scope_posture>
+            <included>
+            - Continuous polling of funding rates across a configurable set of
+              USDT-margined linear perpetual venues.
+            - Normalized, append-only historical corpus suitable for offline
+              research and calibration.
+            - Anomaly detection and lifecycle tracking (birth → persistence →
+              decay), with definition deferred (see `open_questions`).
+            </included>
+            <excluded>
+            - Order execution, position management, PnL accounting — these
+              belong to the separate Execution Engine.
+            - Spot markets, options, coin-margined/inverse perps, quanto
+              instruments.
+            - Real-time alerting, dashboards, or UI layers in v1.
+            </excluded>
+        </scope_posture>
+
+        <collection_layer type="Cron-Invoked Async Poller">
+        A single `ccxt.async_support` script hitting bulk funding endpoints per
+        exchange (per-symbol fallback where unavailable). Invoked by cron at
+        fixed 60-second cadence (`* * * * *`); sub-minute resolution is
+        explicitly out of scope until a concrete calibration need demonstrates
+        otherwise.
+
+        Three critical normalizations enforced at ingestion:
+
+        - **Interval-agnostic APY**: $APY = r_{epoch} \times \frac{365 \times 24}{H_{epoch}}$,
+          collapsing 1h/4h/8h venue heterogeneity into a comparable unit.
+        - **Symbol canonicalization**: unified keys across venue-specific
+          formats (e.g., `XRP/USDT:USDT` vs `XRPUSDT` vs `XRP-USDT-SWAP`).
+        - **Quanto-risk rejection**: strictly filters for USDT-margined linear
+          perps at ingestion; coin-margined, inverse, and quanto contracts are
+          dropped before they touch the corpus.
+
+        Poll cycles write directly to the current date partition. Cron's
+        built-in supervision (restart-on-boot, per-invocation isolation, log
+        capture via MTA or file redirection) is leveraged deliberately to avoid
+        introducing a long-running daemon and its attendant ops surface.
+        </collection_layer>
+
+        <exchange_universe posture="dynamic">
+        The set of monitored venues is **configuration-driven, not hardcoded**.
+        A config file (YAML/TOML) enumerates active exchanges; adding or
+        removing a venue is a config edit, not a code change. This keeps the
+        collector agnostic to the eventual universe size and avoids baking in
+        assumptions about "the 20 exchanges" or any other fixed count.
+
+        Each entry carries: exchange id (ccxt convention), enabled flag,
+        optional per-venue rate-limit overrides, optional symbol allowlist/
+        blocklist. The loader validates that each configured venue exposes the
+        funding endpoints the collector relies on at startup.
+        </exchange_universe>
+
+        <storage_layer>
+            <format>Parquet, date-partitioned (`YYYY-MM-DD/`), append-only.</format>
+            <schema name="funding_observation">
+            - `ts_poll`            — UTC timestamp of the poll cycle (int64, ms)
+            - `exchange`           — canonical exchange id (string)
+            - `symbol_canonical`   — unified cross-venue symbol (string)
+            - `symbol_native`      — raw venue symbol, preserved for audit (string)
+            - `funding_rate`       — raw per-epoch rate $r_{epoch}$ (float64)
+            - `funding_interval_h` — epoch length $H_{epoch}$ in hours (float32)
+            - `apy_normalized`     — interval-agnostic APY (float64)
+            - `mark_price`         — venue mark price at poll (float64, nullable)
+            - `index_price`        — venue index price at poll (float64, nullable)
+            - `next_funding_time`  — UTC timestamp of next epoch boundary
+                                     (int64, ms) — required for epoch-boundary
+                                     detection and "epochs survived" counting
+            </schema>
+        </storage_layer>
+
+        <anomaly_layer status="deferred">
+        Detection logic and the formal anomaly definition are explicitly
+        out-of-scope for v1 of the collector. The corpus must be rich enough
+        (raw per-poll observations, both rates and prices, with epoch-boundary
+        markers) that any reasonable definition — z-score over rolling window,
+        cross-venue spread threshold, APY percentile, or a learned detector —
+        can be applied retroactively to the stored data. Definition to be
+        settled once enough corpus exists to inspect the empirical
+        distribution.
+        </anomaly_layer>
+
+        <hosting_model>
+        **Local execution only.** The scanner runs on a single developer
+        machine under the user's own cron. No VPS, no container orchestration,
+        no remote service manager. This bounds the ops surface to:
+
+        - a Python environment,
+        - a crontab entry,
+        - a local directory for the Parquet corpus.
+
+        If corpus volume or uptime requirements ever outgrow a local host, the
+        collection layer is designed to port to a VPS without code change
+        (config-driven venues, cron-invoked, filesystem-only persistence), but
+        that migration is not a v1 concern.
+        </hosting_model>
+
+        <non_goals>
+        - No long-running daemon / service-manager integration.
+        - No fixed exchange count or hardcoded venue list.
+        - No anomaly-detection logic committed in v1.
+        - No execution, no PnL, no alerting.
+        - No sub-60s polling cadence.
+        </non_goals>
+
+        <open_questions status="tracked_not_blocking">
+        - **Anomaly definition**: deferred until corpus inspection is possible.
+        - **Exchange universe size**: intentionally variable; no target count.
+        - **Corpus retention policy**: not yet specified (append-only for now;
+          compaction/rollup strategy to revisit when partition sizes warrant).
+        </open_questions>
+
+    </project>
+
+</context>
