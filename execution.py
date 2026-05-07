@@ -180,6 +180,7 @@ def project_slice(
     pair: ExecutionPair,
     basis_floor_bps: float,
     remaining_qty_base: float,
+    min_dispatch_base: float,
     side: str,  # "entry" | "exit"
 ) -> Optional[SliceQuote]:
     """
@@ -200,6 +201,15 @@ def project_slice(
     engine will reject any fill beyond those prices, physically enforcing
     the basis floor. DEPTH_DISCOUNT haircut applies to dispatched size only,
     not to limits.
+
+    `min_dispatch_base` is the dust floor — the largest of the two legs' min
+    lot sizes expressed in base tokens. Two interactions:
+      1. Returned None if even the safe ceiling is below min — book is too
+         thin to trade.
+      2. If DEPTH_DISCOUNT × safe_ceiling would drop below min, fall back to
+         dispatching at the full safe_ceiling. Sacrifices the phantom-liquidity
+         buffer on this slice in exchange for staying tradeable. Naturally
+         applies to residuals and tiny smoketest sizes.
 
     Returns None if no positive S satisfies the floor.
     """
@@ -278,9 +288,17 @@ def project_slice(
     if final_basis is None or final_basis < floor_frac:
         return None
 
-    dispatch_size_base = lo_base * DEPTH_DISCOUNT
-    if dispatch_size_base <= 0:
+    # Even the safe ceiling is below tradeable minimum — book too thin to slice.
+    if lo_base < min_dispatch_base:
         return None
+
+    # Dust-floor-aware haircut: fall back to no-haircut dispatch when the
+    # discounted size would be untradeable. Standard for residuals and tiny
+    # smoketest sizes; the operator accepts loss of phantom-liquidity buffer
+    # on this slice rather than no fill at all.
+    dispatch_size_base = lo_base * DEPTH_DISCOUNT
+    if dispatch_size_base < min_dispatch_base:
+        dispatch_size_base = lo_base
 
     return SliceQuote(
         size_base=dispatch_size_base,
@@ -511,7 +529,7 @@ async def run_slicing_loop(
                 break
             continue
 
-        quote = project_slice(book_long, book_short, pair, basis_floor_bps, remaining_base, side)
+        quote = project_slice(book_long, book_short, pair, basis_floor_bps, remaining_base, dust_base, side)
         if quote is None:
             if await _wait_or_abort(IDLE_RETRY_S, abort_event):
                 halt_reason = "aborted"
@@ -557,9 +575,12 @@ async def run_slicing_loop(
             f"raw_basis={raw_basis_bps:.2f}bps",
             "BOOK",
         )
+        # Effective haircut: usually DEPTH_DISCOUNT, but reverts to 1.0 when the
+        # discounted size would fall below the dust floor (residuals / tiny sizes).
+        effective_haircut = quote.size_base / quote.safe_size_base if quote.safe_size_base > 0 else 0.0
         log(
             f"IOC slice dispatch_base={quote.size_base:.8f} safe_ceiling_base={quote.safe_size_base:.8f} "
-            f"(haircut=×{DEPTH_DISCOUNT}) "
+            f"(haircut=×{effective_haircut:.2f}) "
             f"limits long_native={quote.limit_long_native} short_native={quote.limit_short_native} "
             f"projected_basis={quote.projected_basis_bps:.2f}bps",
             "SLICE",
