@@ -266,8 +266,8 @@ def project_slice(
             basis = (l_vwap_base - s_vwap_base) / mid_price_base
         return basis, l_deep_native, s_deep_native
 
-    # Binary search: lo_base is always a passing S (in base); hi_search is always failing
-    # (or the initial cap)
+    # Binary search: lo_base is always a passing S (in base); hi_search is always
+    # failing (or the initial cap, which we snap onto at the end if it also passes).
     lo_base = 0.0
     hi_search = hi_base
     for _ in range(BINARY_SEARCH_ITERATIONS):
@@ -279,6 +279,16 @@ def project_slice(
             lo_base = midpoint_base
         else:
             hi_search = midpoint_base
+
+    # Final-step snap: halvings never land lo_base exactly at hi_search — they
+    # leave a ~hi_base/2^iters fence-post gap. That gap is invisible to haircut
+    # math but trips the min_dispatch_base guard below when target ≈ dust
+    # (residuals, smoketest-tiny entries). If hi_search would also pass, snap
+    # lo_base up to it. Closes the fence-post at the source.
+    if hi_search > lo_base:
+        basis_at_top, _, _ = basis_at(hi_search)
+        if basis_at_top is not None and basis_at_top >= floor_frac:
+            lo_base = hi_search
 
     if lo_base <= 0:
         return None
