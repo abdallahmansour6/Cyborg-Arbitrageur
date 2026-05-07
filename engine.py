@@ -130,7 +130,11 @@ class ArbitrageEngine:
         Payload: {symbol, exchanges: [...], leverage}
         """
         data = await request.json()
-        symbol, exchanges, leverage = data["symbol"], data["exchanges"], data["leverage"]
+        symbol = data["symbol"]
+        # Canonical CCXT ids are lowercase. Normalize at the boundary so any
+        # casing from the operator maps to the same engine dict keys.
+        exchanges = [ex.lower() for ex in data["exchanges"]]
+        leverage = data["leverage"]
         try:
             # 1. Instantiate all exchanges concurrently (loads markets, spawns heartbeat)
             await asyncio.gather(*(self.get_or_create_exchange(ex) for ex in exchanges))
@@ -179,8 +183,8 @@ class ArbitrageEngine:
         """
         data = await request.json()
         symbol = data["symbol"]
-        long_ex_id = data["long"]
-        short_ex_id = data["short"]
+        long_ex_id = data["long"].lower()
+        short_ex_id = data["short"].lower()
         target_qty = data["amount"]
         basis_floor_bps = data["min_entry_basis_bps"]
         max_duration_s = data["max_duration_s"]

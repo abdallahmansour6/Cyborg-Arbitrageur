@@ -20,5 +20,5 @@ def get_exchange(exchange_id):
     if password:
         creds["password"] = password
     
-    exchange_class = getattr(ccxtpro, exchange_id)
+    exchange_class = getattr(ccxtpro, exchange_id.lower())
     return exchange_class(creds)
