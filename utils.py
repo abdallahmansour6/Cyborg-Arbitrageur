@@ -4,12 +4,17 @@ from datetime import datetime
 
 LOG_FILE = "transaction.log"
 STATE_FILE = "positions.json"
+CLOSED_TRADES_FILE = "closed_trades.json"
+
+
+def now_str():
+    """Millisecond-precision timestamp matching the log format."""
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
 def log(message, source="SYS"):
     """Prints a timestamped log and instantly writes to disk using OS buffering."""
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-    log_line = f"[{timestamp}] [{source.upper()}] {message}"
+    log_line = f"[{now_str()}] [{source.upper()}] {message}"
     print(log_line)
 
     try:
@@ -31,3 +36,17 @@ def save_state(state):
     """Synchronous JSON dump. Tiny dicts take < 1 millisecond."""
     with open(STATE_FILE, "w") as f:
         json.dump(state, f, indent=4)
+
+
+def append_closed_trade(record):
+    """Append a closed-trade record to the archive. Creates the file if missing."""
+    trades = []
+    if os.path.exists(CLOSED_TRADES_FILE):
+        try:
+            with open(CLOSED_TRADES_FILE, "r") as f:
+                trades = json.load(f)
+        except Exception:
+            trades = []
+    trades.append(record)
+    with open(CLOSED_TRADES_FILE, "w") as f:
+        json.dump(trades, f, indent=4)

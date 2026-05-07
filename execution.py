@@ -42,7 +42,7 @@ DEPTH_DISCOUNT = 0.5
 SLICE_COOLDOWN_S = 1.5
 
 # Idle wait when books are missing or no slice satisfies the floor.
-IDLE_RETRY_S = 0.25
+IDLE_RETRY_S = 0.20
 
 # Binary search iteration count. ~20 halvings over [0, remaining_qty]
 # resolves S to ~1e-6 of the upper bound — far below any realistic dust threshold.
@@ -52,10 +52,37 @@ BSEARCH_ITERS = 20
 @dataclass
 class SliceQuote:
     """One synchronized slice, post-discount, ready for IOC dispatch."""
-    size: float                  # base qty for this slice (post-DEPTH_DISCOUNT)
-    limit_long: float            # IOC limit for the long leg
-    limit_short: float           # IOC limit for the short leg
-    projected_basis_bps: float   # basis at the pre-discount S boundary (for logs)
+    size: float                  # base qty actually dispatched (= safe_size * DEPTH_DISCOUNT)
+    safe_size: float             # pre-discount binary-search ceiling — the largest S that
+                                 # satisfied the basis floor on the snapshot. Exposed so the
+                                 # operator can see the DEPTH_DISCOUNT haircut delta in logs
+                                 # and use it to tune the discount factor over time.
+    limit_long: float            # IOC limit for the long leg (deepest level at safe_size)
+    limit_short: float           # IOC limit for the short leg (deepest level at safe_size)
+    projected_basis_bps: float   # basis at safe_size (the worst-case fill if both IOCs walked
+                                 # all the way down to the limits — actual realized basis is
+                                 # usually tighter since fills typically stop before the limit)
+    p_mid: float                 # 4-point reference mid at projection time
+
+
+@dataclass
+class RecoveryFill:
+    """Result of imbalance recovery on the lagging leg."""
+    leg: str         # "long" | "short" — which leg got recovered
+    base_qty: float  # base tokens filled by the recovery market order
+    vwap: float      # average fill price
+
+
+@dataclass
+class LoopResult:
+    """Aggregate output of run_slicing_loop. Quantities in base, prices in quote/base."""
+    filled_base: float          # symmetric (delta-neutral) qty added to position
+    halt_reason: str            # "target" | "deadline" | "aborted" | "dust"
+    qty_long: float             # cumulative base filled on long leg (incl. recovery)
+    qty_short: float            # cumulative base filled on short leg (incl. recovery)
+    vwap_long: float            # qty-weighted VWAP for long leg
+    vwap_short: float           # qty-weighted VWAP for short leg
+    realized_basis_bps: float   # signed by side; entry: (vwap_S-vwap_L); exit: (vwap_L-vwap_S)
 
 
 # ---------- Helpers ----------
@@ -69,6 +96,34 @@ def _to_base_qty(engine, ex_id: str, symbol: str, exchange_qty) -> float:
     market = engine.exchanges[ex_id].markets[symbol]
     contract_size = market.get("contractSize") or 1
     return float(exchange_qty or 0) * contract_size
+
+
+def _fill_vwap(receipt) -> float:
+    """
+    Average fill price from a CCXT receipt with two fallbacks. Some venues
+    populate `average`; others only `cost`+`filled`; some require walking the
+    trades list. Returns 0.0 only if no price data is recoverable.
+    """
+    avg = receipt.get("average")
+    if avg is not None and float(avg) > 0:
+        return float(avg)
+    cost = receipt.get("cost")
+    filled = receipt.get("filled")
+    if cost is not None and filled and float(filled) > 0:
+        return float(cost) / float(filled)
+    trades = receipt.get("trades") or []
+    if trades:
+        total_notional = 0.0
+        total_qty = 0.0
+        for t in trades:
+            qty = float(t.get("amount") or 0)
+            price = float(t.get("price") or 0)
+            cost_t = t.get("cost")
+            total_notional += float(cost_t) if cost_t is not None else price * qty
+            total_qty += qty
+        if total_qty > 0:
+            return total_notional / total_qty
+    return 0.0
 
 
 def vwap_by_depth(
@@ -209,9 +264,11 @@ def project_slice(
 
     return SliceQuote(
         size=s_dispatch,
+        safe_size=lo,
         limit_long=deep_long,
         limit_short=deep_short,
         projected_basis_bps=b_final * 10000.0,
+        p_mid=p_mid,
     )
 
 
@@ -227,6 +284,8 @@ async def dispatch_ioc_pair(
 ):
     """
     Concurrent IOC limit dispatch. Returns (receipt_long, receipt_short).
+    Returns (None, None) if the slice rounds to sub-lot on either leg —
+    no order is placed; caller should treat as a skipped cycle.
 
     Uses gather(return_exceptions=True) so BOTH legs always run to completion
     before we decide what to do. Otherwise an orphaned coroutine could place
@@ -248,6 +307,14 @@ async def dispatch_ioc_pair(
 
     amt_long = engine.normalize_amount(ex_long, symbol, quote.size)
     amt_short = engine.normalize_amount(ex_short, symbol, quote.size)
+
+    if amt_long <= 0 or amt_short <= 0:
+        log(
+            f"Slice {quote.size:.8f} rounds to sub-lot "
+            f"(L={amt_long}, S={amt_short}). Skipping cycle.",
+            "SLICE",
+        )
+        return None, None
 
     params = {"timeInForce": "IOC"}
     if reduce_only:
@@ -286,14 +353,14 @@ async def recover_imbalance(
     base_filled_long: float,
     base_filled_short: float,
     side: str,
-):
+) -> Optional[RecoveryFill]:
     """
     Diff fills (in BASE tokens). If asymmetric beyond the dust floor, fire an
     uncapped market order on the lagging leg to restore delta-neutrality.
     Bypasses basis gating — neutrality > marginal cost on a fractional remainder.
 
-    Returns the recovery receipt or None if asymmetry is below dust / zero.
-    Re-raises on dispatch failure; engine will halt + Pushover P2.
+    Returns RecoveryFill (leg, base_qty, vwap) on dispatch, None if asymmetry
+    is below dust / zero. Re-raises on dispatch failure; engine fires Pushover P2.
     """
     delta = base_filled_long - base_filled_short
     dust = max(
@@ -312,9 +379,11 @@ async def recover_imbalance(
     #     delta<0 (short ahead) -> long SELL more
     if delta > 0:
         target_ex_id = short_ex_id
+        target_leg = "short"
         market_side = "sell" if side == "entry" else "buy"
     else:
         target_ex_id = long_ex_id
+        target_leg = "long"
         market_side = "buy" if side == "entry" else "sell"
 
     ex = engine.exchanges[target_ex_id]
@@ -326,18 +395,22 @@ async def recover_imbalance(
 
     params = {"reduceOnly": True} if side == "exit" else {}
 
-    log(
-        f"Recovery: {market_side} {amt_native} {symbol} on {target_ex_id} "
-        f"(delta={delta:.8f} base, side={side})",
-        "RECOVERY",
-    )
-
     try:
         receipt = await ex.create_market_order(symbol, market_side, amt_native, params=params)
-        return receipt
     except Exception as e:
         log(f"Recovery FAILED on {target_ex_id}: {e}", "CRITICAL")
         raise
+
+    fill_qty_base = _to_base_qty(engine, target_ex_id, symbol, receipt.get("filled"))
+    fill_vwap = _fill_vwap(receipt)
+
+    log(
+        f"Recovery: {market_side} {amt_native} {symbol} on {target_ex_id} @{fill_vwap:.8f} "
+        f"(filled_base={fill_qty_base:.8f}, delta={delta:.8f}, side={side})",
+        "RECOVERY",
+    )
+
+    return RecoveryFill(leg=target_leg, base_qty=fill_qty_base, vwap=fill_vwap)
 
 
 # ---------- Main loop ----------
@@ -352,7 +425,7 @@ async def run_slicing_loop(
     max_duration_s: float,
     side: str,
     abort_event: Optional[asyncio.Event] = None,
-) -> Tuple[float, str]:
+) -> LoopResult:
     """
     The Iterative Slicing Loop.
 
@@ -361,9 +434,10 @@ async def run_slicing_loop(
       2. project_slice() -> SliceQuote | None  (binary search + basis gate + discount)
       3. None? short sleep, retry
       4. dispatch_ioc_pair (concurrent IOCs) -> receipts
-      5. _to_base_qty on receipt['filled'] for each leg
-      6. recover_imbalance — restores neutrality on asymmetric fill
-      7. Increment filled_total by the symmetric base-token contribution
+      5. _to_base_qty + _fill_vwap on receipt['filled']/['average'] for each leg
+      6. recover_imbalance — restores neutrality on asymmetric fill (RecoveryFill | None)
+      7. Accumulate qty + notional per leg (incl. recovery contribution); compute
+         per-cycle realized basis and log it live
       8. SLICE_COOLDOWN_S yield to let MMs replenish
 
     Halts gracefully on any of: filled_total >= target_qty, deadline expires,
@@ -371,13 +445,18 @@ async def run_slicing_loop(
     cycle boundaries only — dispatch+recovery is atomic, never interruptible
     mid-flight. This guarantees neutrality on halt.
 
-    Returns (total_filled_base, halt_reason).
-      halt_reason in {"target", "deadline", "aborted", "dust"}
+    Returns a LoopResult with cumulative VWAPs, realized basis, and halt reason.
     A structural failure raises (engine fires Pushover P2).
     """
     deadline = time.monotonic() + max_duration_s
     filled_total = 0.0
     halt_reason: Optional[str] = None
+
+    # Cumulative accumulators (base tokens / quote-currency notional)
+    notional_long = 0.0
+    notional_short = 0.0
+    qty_long = 0.0
+    qty_short = 0.0
 
     dust = max(
         engine._min_amount_in_base(long_ex_id, symbol),
@@ -416,10 +495,40 @@ async def run_slicing_loop(
                 break
             continue
 
+        # Pre-dispatch telemetry: market context first, then engine verdict.
+        #
+        # raw_basis is the basis at top-of-book with no depth walking. Comparing
+        # it to proj_basis (basis at safe_size, post-walk) tells the operator
+        # whether the slice is firing against free top-of-book spread (raw ≈
+        # proj) or chasing depth into the book (proj << raw, the binary search
+        # walked deeper to find a larger safe S).
+        #
+        # The fire=post/safe (×DEPTH_DISCOUNT) format on the SLICE line surfaces
+        # the haircut explicitly. Compare 'fire' (what we sent) against the
+        # post-dispatch 'filled L=…@… S=…@…' line: if filled qty consistently
+        # lands at fire, DEPTH_DISCOUNT is conservative and could be raised; if
+        # it lands well below, the haircut is absorbing real phantom liquidity.
+        l_bid = float(book_long["bids"][0][0])
+        l_ask = float(book_long["asks"][0][0])
+        s_bid = float(book_short["bids"][0][0])
+        s_ask = float(book_short["asks"][0][0])
+        l_spread_bps = (l_ask - l_bid) / ((l_ask + l_bid) / 2.0) * 10000.0
+        s_spread_bps = (s_ask - s_bid) / ((s_ask + s_bid) / 2.0) * 10000.0
+        if side == "entry":
+            raw_basis_bps = (s_bid - l_ask) / quote.p_mid * 10000.0
+        else:
+            raw_basis_bps = (l_bid - s_ask) / quote.p_mid * 10000.0
+
         log(
-            f"IOC slice size={quote.size:.8f} "
+            f"L: bid={l_bid:.8f} ask={l_ask:.8f} (sp={l_spread_bps:.2f}bps)  "
+            f"S: bid={s_bid:.8f} ask={s_ask:.8f} (sp={s_spread_bps:.2f}bps)  "
+            f"raw_basis={raw_basis_bps:.2f}bps",
+            "BOOK",
+        )
+        log(
+            f"IOC slice fire={quote.size:.8f}/{quote.safe_size:.8f} (×{DEPTH_DISCOUNT}) "
             f"limits L={quote.limit_long} S={quote.limit_short} "
-            f"projected_basis={quote.projected_basis_bps:.2f}bps",
+            f"proj_basis={quote.projected_basis_bps:.2f}bps",
             "SLICE",
         )
 
@@ -429,31 +538,79 @@ async def run_slicing_loop(
             engine, long_ex_id, short_ex_id, symbol, quote, side
         )
 
-        base_filled_long = _to_base_qty(
-            engine, long_ex_id, symbol, receipt_long.get("filled")
-        )
-        base_filled_short = _to_base_qty(
-            engine, short_ex_id, symbol, receipt_short.get("filled")
-        )
+        # Sub-lot slice — dispatch was skipped, no fill to account for.
+        # Same handling as quote=None: brief idle, retry next cycle.
+        if receipt_long is None or receipt_short is None:
+            if await _wait_or_abort(IDLE_RETRY_S, abort_event):
+                halt_reason = "aborted"
+                break
+            continue
 
-        recovery_receipt = await recover_imbalance(
+        base_filled_long = _to_base_qty(engine, long_ex_id, symbol, receipt_long.get("filled"))
+        base_filled_short = _to_base_qty(engine, short_ex_id, symbol, receipt_short.get("filled"))
+        vwap_long_ioc = _fill_vwap(receipt_long) if base_filled_long > 0 else 0.0
+        vwap_short_ioc = _fill_vwap(receipt_short) if base_filled_short > 0 else 0.0
+
+        recovery = await recover_imbalance(
             engine, long_ex_id, short_ex_id, symbol,
             base_filled_long, base_filled_short, side,
         )
 
-        if recovery_receipt is not None:
-            cycle_filled = max(base_filled_long, base_filled_short)
-        else:
-            cycle_filled = min(base_filled_long, base_filled_short)
+        # Per-cycle leg totals (IOC + any recovery contribution to the lagging leg)
+        cycle_qty_long = base_filled_long
+        cycle_qty_short = base_filled_short
+        cycle_notional_long = vwap_long_ioc * base_filled_long
+        cycle_notional_short = vwap_short_ioc * base_filled_short
 
+        if recovery is not None:
+            if recovery.leg == "long":
+                cycle_qty_long += recovery.base_qty
+                cycle_notional_long += recovery.vwap * recovery.base_qty
+            else:
+                cycle_qty_short += recovery.base_qty
+                cycle_notional_short += recovery.vwap * recovery.base_qty
+
+            # Recovery underfill check — exchange-side asymmetric residual is invisible
+            # to position state. Loud-log it so the operator can reconcile manually.
+            expected_recovery = abs(base_filled_long - base_filled_short)
+            if abs(recovery.base_qty - expected_recovery) > dust:
+                log(
+                    f"Recovery UNDERFILL: requested {expected_recovery:.8f} got {recovery.base_qty:.8f}. "
+                    f"Asymmetric exchange-side residual {expected_recovery - recovery.base_qty:.8f} base.",
+                    "WARNING",
+                )
+
+        # Symmetric (delta-neutral) contribution to the position
+        cycle_filled = min(cycle_qty_long, cycle_qty_short)
         filled_total += cycle_filled
 
-        log(
-            f"Cycle filled={cycle_filled:.8f} cumulative={filled_total:.8f}/{target_qty} "
-            f"L={base_filled_long:.8f} S={base_filled_short:.8f} "
-            f"recovered={recovery_receipt is not None}",
-            "SLICE",
-        )
+        notional_long += cycle_notional_long
+        notional_short += cycle_notional_short
+        qty_long += cycle_qty_long
+        qty_short += cycle_qty_short
+
+        # Per-cycle realized basis (post-recovery combined VWAPs)
+        if cycle_qty_long > 0 and cycle_qty_short > 0:
+            cycle_vwap_long = cycle_notional_long / cycle_qty_long
+            cycle_vwap_short = cycle_notional_short / cycle_qty_short
+            p_ref = (cycle_vwap_long + cycle_vwap_short) / 2.0
+            if side == "entry":
+                cycle_basis_bps = (cycle_vwap_short - cycle_vwap_long) / p_ref * 10000.0
+            else:
+                cycle_basis_bps = (cycle_vwap_long - cycle_vwap_short) / p_ref * 10000.0
+            log(
+                f"filled L={cycle_qty_long:.8f}@{cycle_vwap_long:.8f} "
+                f"S={cycle_qty_short:.8f}@{cycle_vwap_short:.8f} "
+                f"real_basis={cycle_basis_bps:.2f}bps "
+                f"recovered={recovery is not None} "
+                f"cum={filled_total:.8f}/{target_qty}",
+                "SLICE",
+            )
+        else:
+            log(
+                f"filled 0/0 (IOCs rejected entirely) cum={filled_total:.8f}/{target_qty}",
+                "SLICE",
+            )
 
         if await _wait_or_abort(SLICE_COOLDOWN_S, abort_event):
             halt_reason = "aborted"
@@ -462,9 +619,30 @@ async def run_slicing_loop(
     if halt_reason is None:
         halt_reason = "target" if filled_total >= target_qty else "deadline"
 
+    cum_vwap_long = notional_long / qty_long if qty_long > 0 else 0.0
+    cum_vwap_short = notional_short / qty_short if qty_short > 0 else 0.0
+    if cum_vwap_long > 0 and cum_vwap_short > 0:
+        cum_p_ref = (cum_vwap_long + cum_vwap_short) / 2.0
+        if side == "entry":
+            cum_basis_bps = (cum_vwap_short - cum_vwap_long) / cum_p_ref * 10000.0
+        else:
+            cum_basis_bps = (cum_vwap_long - cum_vwap_short) / cum_p_ref * 10000.0
+    else:
+        cum_basis_bps = 0.0
+
     log(
-        f"Slicing loop END filled={filled_total:.8f}/{target_qty} "
-        f"halt_reason={halt_reason}",
+        f"Slicing loop END filled={filled_total:.8f}/{target_qty} halt_reason={halt_reason} "
+        f"cum_vwap_L={cum_vwap_long:.8f} cum_vwap_S={cum_vwap_short:.8f} "
+        f"cum_real_basis={cum_basis_bps:.2f}bps",
         "SLICE",
     )
-    return filled_total, halt_reason
+
+    return LoopResult(
+        filled_base=filled_total,
+        halt_reason=halt_reason,
+        qty_long=qty_long,
+        qty_short=qty_short,
+        vwap_long=cum_vwap_long,
+        vwap_short=cum_vwap_short,
+        realized_basis_bps=cum_basis_bps,
+    )

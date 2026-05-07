@@ -1,7 +1,7 @@
 import asyncio
 from aiohttp import web
 from config import get_exchange
-from utils import log, load_state, save_state
+from utils import log, load_state, save_state, append_closed_trade, now_str
 from notifier import send_pushover
 from execution import run_slicing_loop
 
@@ -213,7 +213,7 @@ class ArbitrageEngine:
         abort_event = asyncio.Event()
         self._abort_events[symbol] = abort_event
         try:
-            filled, halt_reason = await run_slicing_loop(
+            result = await run_slicing_loop(
                 self,
                 symbol,
                 long_ex_id,
@@ -229,8 +229,8 @@ class ArbitrageEngine:
             asyncio.create_task(
                 asyncio.to_thread(
                     send_pushover,
-                    f"CRITICAL: ENTRY FAILED on {symbol}: {e}",
-                    "Manual intervention required.",
+                    f"{e}\nManual intervention required.",
+                    f"CRITICAL: ENTRY FAILED on {symbol}",
                     2,
                 )
             )
@@ -238,31 +238,67 @@ class ArbitrageEngine:
         finally:
             self._abort_events.pop(symbol, None)
 
-        if filled > 0:
+        if result.filled_base > 0:
             if symbol in self.positions:
-                self.positions[symbol]["amount"] += filled
+                # Scale-in: qty-weight-blend entry VWAPs against the cumulative entry_qty
+                # (NOT the residual amount — exits don't dilute the entry-side average).
+                pos = self.positions[symbol]
+                old_entry_qty = pos.get("entry_qty", pos["amount"])
+                new_entry_qty = old_entry_qty + result.filled_base
+                pos["entry_vwap_long"] = (
+                    pos.get("entry_vwap_long", 0.0) * old_entry_qty
+                    + result.vwap_long * result.filled_base
+                ) / new_entry_qty
+                pos["entry_vwap_short"] = (
+                    pos.get("entry_vwap_short", 0.0) * old_entry_qty
+                    + result.vwap_short * result.filled_base
+                ) / new_entry_qty
+                p_ref = (pos["entry_vwap_long"] + pos["entry_vwap_short"]) / 2.0
+                pos["entry_basis_bps"] = (
+                    (pos["entry_vwap_short"] - pos["entry_vwap_long"]) / p_ref * 10000.0
+                    if p_ref > 0 else 0.0
+                )
+                pos["entry_qty"] = new_entry_qty
+                pos["amount"] = new_entry_qty - pos.get("exit_qty", 0.0)
                 log(
-                    f"Scaled in. New total: {self.positions[symbol]['amount']} {symbol} (halt={halt_reason})",
+                    f"Scaled in. entry_qty={new_entry_qty} amount={pos['amount']} "
+                    f"entry_basis={pos['entry_basis_bps']:.2f}bps (halt={result.halt_reason})",
                     "ENTRY",
                 )
             else:
                 self.positions[symbol] = {
                     "long_ex": long_ex_id,
                     "short_ex": short_ex_id,
-                    "amount": filled,
+                    "amount": result.filled_base,
+                    "entry_qty": result.filled_base,
+                    "entry_vwap_long": result.vwap_long,
+                    "entry_vwap_short": result.vwap_short,
+                    "entry_basis_bps": result.realized_basis_bps,
+                    "exit_qty": 0.0,
+                    "exit_vwap_long": None,
+                    "exit_vwap_short": None,
+                    "exit_basis_bps": None,
+                    "opened_at": now_str(),
                 }
                 log(
-                    f"Delta-neutral established for {symbol} at {filled} (halt={halt_reason})",
+                    f"Delta-neutral established for {symbol} amount={result.filled_base} "
+                    f"entry_basis={result.realized_basis_bps:.2f}bps (halt={result.halt_reason})",
                     "ENTRY",
                 )
             await asyncio.to_thread(save_state, self.positions)
         else:
-            log(f"Entry filled 0/{target_qty} {symbol} (halt={halt_reason}). No state change.", "ENTRY")
+            log(
+                f"Entry filled 0/{target_qty} {symbol} (halt={result.halt_reason}). No state change.",
+                "ENTRY",
+            )
 
         return web.json_response({
-            "filled": filled,
+            "filled": result.filled_base,
             "target": target_qty,
-            "halt_reason": halt_reason,
+            "halt_reason": result.halt_reason,
+            "vwap_long": result.vwap_long,
+            "vwap_short": result.vwap_short,
+            "realized_basis_bps": result.realized_basis_bps,
         })
 
     async def handle_exit(self, request):
@@ -305,7 +341,7 @@ class ArbitrageEngine:
         abort_event = asyncio.Event()
         self._abort_events[symbol] = abort_event
         try:
-            filled, halt_reason = await run_slicing_loop(
+            result = await run_slicing_loop(
                 self,
                 symbol,
                 long_ex_id,
@@ -321,8 +357,8 @@ class ArbitrageEngine:
             asyncio.create_task(
                 asyncio.to_thread(
                     send_pushover,
-                    f"CRITICAL: EXIT FAILED on {symbol}: {e}",
-                    "Manual intervention required.",
+                    f"{e}\nManual intervention required.",
+                    f"CRITICAL: EXIT FAILED on {symbol}",
                     2,
                 )
             )
@@ -330,27 +366,76 @@ class ArbitrageEngine:
         finally:
             self._abort_events.pop(symbol, None)
 
-        pos["amount"] -= filled
+        # Blend exit-side VWAPs against cumulative exit_qty (multi-leg unwinds).
+        if result.filled_base > 0:
+            old_exit_qty = pos.get("exit_qty", 0.0)
+            new_exit_qty = old_exit_qty + result.filled_base
+            old_exit_l = pos.get("exit_vwap_long") or 0.0
+            old_exit_s = pos.get("exit_vwap_short") or 0.0
+            pos["exit_vwap_long"] = (
+                old_exit_l * old_exit_qty + result.vwap_long * result.filled_base
+            ) / new_exit_qty
+            pos["exit_vwap_short"] = (
+                old_exit_s * old_exit_qty + result.vwap_short * result.filled_base
+            ) / new_exit_qty
+            p_ref = (pos["exit_vwap_long"] + pos["exit_vwap_short"]) / 2.0
+            pos["exit_basis_bps"] = (
+                (pos["exit_vwap_long"] - pos["exit_vwap_short"]) / p_ref * 10000.0
+                if p_ref > 0 else 0.0
+            )
+            pos["exit_qty"] = new_exit_qty
+            pos["amount"] -= result.filled_base
 
         # Dust check: residual below either leg's min lot size means we cannot
-        # legally trade it again — treat as flat and clear the ledger.
+        # legally trade it again — archive the closed trade and clear the ledger.
         dust = max(
             self._min_amount_in_base(long_ex_id, symbol),
             self._min_amount_in_base(short_ex_id, symbol),
         )
         if pos["amount"] <= dust:
+            entry_basis = pos.get("entry_basis_bps", 0.0) or 0.0
+            exit_basis = pos.get("exit_basis_bps", 0.0) or 0.0
+            closed_record = {
+                "symbol": symbol,
+                "long_ex": pos["long_ex"],
+                "short_ex": pos["short_ex"],
+                "entry_qty": pos.get("entry_qty", 0.0),
+                "exit_qty": pos.get("exit_qty", 0.0),
+                "residual_dust": pos["amount"],
+                "entry_vwap_long": pos.get("entry_vwap_long", 0.0),
+                "entry_vwap_short": pos.get("entry_vwap_short", 0.0),
+                "entry_basis_bps": entry_basis,
+                "exit_vwap_long": pos.get("exit_vwap_long", 0.0),
+                "exit_vwap_short": pos.get("exit_vwap_short", 0.0),
+                "exit_basis_bps": exit_basis,
+                "round_trip_basis_bps": entry_basis + exit_basis,
+                "opened_at": pos.get("opened_at"),
+                "closed_at": now_str(),
+            }
+            await asyncio.to_thread(append_closed_trade, closed_record)
             del self.positions[symbol]
-            log(f"Position flattened on {symbol} (residual {pos['amount']} <= dust {dust}).", "EXIT")
+            log(
+                f"Position closed on {symbol}. round_trip_basis="
+                f"{closed_record['round_trip_basis_bps']:.2f}bps. Archived to closed_trades.json.",
+                "EXIT",
+            )
         else:
-            log(f"Exit filled {filled}/{target_qty} {symbol}, residual {pos['amount']}.", "EXIT")
+            log(
+                f"Exit filled {result.filled_base}/{target_qty} {symbol}, residual {pos['amount']}, "
+                f"exit_basis={pos.get('exit_basis_bps', 0.0):.2f}bps (halt={result.halt_reason}).",
+                "EXIT",
+            )
 
         await asyncio.to_thread(save_state, self.positions)
 
         return web.json_response({
-            "filled": filled,
+            "filled": result.filled_base,
             "target": target_qty,
             "remaining": self.positions.get(symbol, {}).get("amount", 0),
-            "halt_reason": halt_reason,
+            "halt_reason": result.halt_reason,
+            "vwap_long": result.vwap_long,
+            "vwap_short": result.vwap_short,
+            "realized_basis_bps": result.realized_basis_bps,
         })
 
     async def handle_abort(self, request):

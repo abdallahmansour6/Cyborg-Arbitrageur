@@ -12,6 +12,22 @@ print(f"[{boot_time}] [CLI] Process booted, parsing args...")
 ENGINE_URL = "http://127.0.0.1:8080"
 
 
+def _render_success(res_data):
+    """One-line ack from any Engine success payload.
+    warmup/abort return {message}; entry/exit return {filled, target, halt_reason, [remaining]}.
+    """
+    if "message" in res_data:
+        return res_data["message"]
+    parts = []
+    if "filled" in res_data:
+        parts.append(f"filled={res_data['filled']:.8f}/{res_data.get('target', '?')}")
+    if "remaining" in res_data:
+        parts.append(f"remaining={res_data['remaining']:.8f}")
+    if "halt_reason" in res_data:
+        parts.append(f"halt={res_data['halt_reason']}")
+    return " | ".join(parts) if parts else json.dumps(res_data)
+
+
 def send_command(endpoint, payload):
     url = f"{ENGINE_URL}/{endpoint}"
     data = json.dumps(payload).encode("utf-8")
@@ -25,17 +41,14 @@ def send_command(endpoint, payload):
         print(f"[{dispatch_time}] [CLI] Dispatching IPC to Engine...")
 
         with urllib.request.urlopen(req) as response:
-            res_body = response.read().decode("utf-8")
-            res_data = json.loads(res_body)
-            if response.status == 200:
-                print(f"✅ SUCCESS: {res_data.get('message')}")
-            else:
-                print(f"❌ ERROR: {res_data.get('error')}")
+            res_data = json.loads(response.read().decode("utf-8"))
+            print(f"✅ SUCCESS: {_render_success(res_data)}")
 
     except urllib.error.HTTPError as e:
         res_body = e.read().decode("utf-8")
         res_data = json.loads(res_body) if res_body else {}
         print(f"❌ ERROR: {res_data.get('error', e.reason)}")
+        sys.exit(1)
     except urllib.error.URLError:
         print("🚨 CRITICAL: Cannot connect to the Engine. Is engine.py running?")
         sys.exit(1)
