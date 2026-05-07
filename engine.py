@@ -1,6 +1,7 @@
 import asyncio
 from aiohttp import web
 from config import get_exchange
+from primitives import ExecutionLeg, ExecutionPair
 from utils import log, load_state, save_state, append_closed_trade, now_str
 from notifier import send_pushover
 from execution import run_slicing_loop
@@ -15,9 +16,9 @@ class ArbitrageEngine:
     def __init__(self):
         self.exchanges = {}        # ex_id -> CCXT Pro instance
         self.order_books = {}      # (ex_id, symbol) -> latest L2 snapshot {bids, asks, timestamp}
-        self.positions = load_state()  # symbol -> {long_ex, short_ex, amount}
+        self.positions = load_state()  # base_coin -> {long: {...}, short: {...}, amount_base, ...}
         self._book_tasks = {}      # (ex_id, symbol) -> asyncio.Task (idempotency guard)
-        self._abort_events = {}    # symbol -> asyncio.Event. Presence => active slicing loop.
+        self._abort_events = {}    # base_coin -> asyncio.Event. Presence => active slicing loop.
                                    # Doubles as concurrent-execution guard for /entry and /exit.
 
     async def get_or_create_exchange(self, ex_id):
@@ -85,40 +86,94 @@ class ArbitrageEngine:
     async def pre_warm(self):
         """
         Crash-recovery boot: re-instantiate exchanges and re-subscribe L2 streams
-        for every symbol referenced in the saved position ledger.
+        for every leg referenced in the saved position ledger.
+
+        Reconstructs ExecutionPair objects from live CCXT markets and audits each
+        against the multiplier/contract_size persisted at position-open time.
+        Live values trump stored ones (stored values are advisory forensics);
+        any drift is loud-logged so the operator can reconcile.
         """
         if not self.positions:
             return
 
-        ex_ids = {p["long_ex"] for p in self.positions.values()} | {
-            p["short_ex"] for p in self.positions.values()
+        ex_ids = {pos["long"]["exchange"] for pos in self.positions.values()} | {
+            pos["short"]["exchange"] for pos in self.positions.values()
         }
         log(f"Pre-warming {len(ex_ids)} exchanges from saved state...", "ENGINE")
         await asyncio.gather(*(self.get_or_create_exchange(ex) for ex in ex_ids))
 
         sub_tasks = []
-        for symbol, pos in self.positions.items():
-            for ex_id in (pos["long_ex"], pos["short_ex"]):
-                sub_tasks.append(self.subscribe_order_book(ex_id, symbol))
+        for base_coin, pos in self.positions.items():
+            try:
+                long_market = self.exchanges[pos["long"]["exchange"]].markets[pos["long"]["symbol"]]
+                short_market = self.exchanges[pos["short"]["exchange"]].markets[pos["short"]["symbol"]]
+                long_leg = ExecutionLeg.from_market(pos["long"]["exchange"], long_market)
+                short_leg = ExecutionLeg.from_market(pos["short"]["exchange"], short_market)
+                pair = ExecutionPair(long=long_leg, short=short_leg)
+            except (KeyError, ValueError) as e:
+                log(
+                    f"Pre-warm: cannot rebuild pair for {base_coin}: {e}. Position orphaned.",
+                    "PREWARM_ERROR",
+                )
+                continue
+
+            # Drift detection — venue silently changed contract_size or we stripped a
+            # different prefix than at open time. Live values are used; stored values
+            # serve as the forensic anchor.
+            for tag, leg, saved in (
+                ("long", pair.long, pos["long"]),
+                ("short", pair.short, pos["short"]),
+            ):
+                if (leg.multiplier != saved.get("multiplier")
+                        or leg.contract_size != saved.get("contract_size")):
+                    log(
+                        f"Pre-warm DRIFT on {base_coin}/{tag}: stored "
+                        f"(multiplier={saved.get('multiplier')}, contract_size={saved.get('contract_size')}) "
+                        f"vs live (multiplier={leg.multiplier}, contract_size={leg.contract_size}). "
+                        f"Live values used; manual reconciliation recommended.",
+                        "PREWARM_WARNING",
+                    )
+
+            if pair.key != base_coin:
+                log(
+                    f"Pre-warm: rebuilt key={pair.key} != stored key={base_coin}. "
+                    f"Symbol prefix parsing must have changed. Position orphaned.",
+                    "PREWARM_ERROR",
+                )
+                continue
+
+            sub_tasks.append(self.subscribe_order_book(pair.long.exchange, pair.long.symbol))
+            sub_tasks.append(self.subscribe_order_book(pair.short.exchange, pair.short.symbol))
+
         await asyncio.gather(*sub_tasks)
         log("Pre-warming complete. All systems hot.", "ENGINE")
 
-    def normalize_amount(self, exchange, symbol, base_amount):
-        """Translate raw base token qty into exchange-specific contract+precision format."""
-        market = exchange.markets[symbol]
-        contract_size = market.get("contractSize")
-        if contract_size and contract_size > 0:
-            raw_amount = base_amount / contract_size
-        else:
-            raw_amount = base_amount
-        return float(exchange.amount_to_precision(symbol, raw_amount))
+    # -------- Leg-aware conversion helpers (the only CCXT-precision boundary) --------
 
-    def _min_amount_in_base(self, ex_id, symbol):
-        """Min lot size expressed in base tokens (handles contractSize divergence)."""
-        market = self.exchanges[ex_id].markets[symbol]
-        raw_min = market.get("limits", {}).get("amount", {}).get("min") or 0
-        contract_size = market.get("contractSize") or 1
-        return raw_min * contract_size
+    def _to_native_qty(self, leg: ExecutionLeg, base_qty: float) -> float:
+        """Translate 1x base qty into exchange-native qty + apply CCXT precision."""
+        raw_native = leg.to_native_qty(base_qty)
+        return float(self.exchanges[leg.exchange].amount_to_precision(leg.symbol, raw_native))
+
+    def _min_base_for_leg(self, leg: ExecutionLeg) -> float:
+        """Min lot size for one leg, expressed in 1x base tokens
+        (handles both prefix multiplier and CCXT contract_size)."""
+        market = self.exchanges[leg.exchange].markets[leg.symbol]
+        raw_min_native = market.get("limits", {}).get("amount", {}).get("min") or 0
+        return raw_min_native * leg.multiplier * leg.contract_size
+
+    def _pair_dust(self, pair: ExecutionPair) -> float:
+        """Dust floor for a pair (max of either leg's min lot, in base)."""
+        return max(self._min_base_for_leg(pair.long), self._min_base_for_leg(pair.short))
+
+    def _serialize_leg(self, leg: ExecutionLeg) -> dict:
+        """Persistence shape for one leg in positions.json."""
+        return {
+            "exchange": leg.exchange,
+            "symbol": leg.symbol,
+            "multiplier": leg.multiplier,
+            "contract_size": leg.contract_size,
+        }
 
     # -------- IPC Handlers --------
 
@@ -126,51 +181,88 @@ class ArbitrageEngine:
         """
         Authenticate, load markets, set leverage, subscribe L2 streams.
         Blocks until the first L2 snapshot lands on every leg — /entry must
-        not race an empty RAM cache.
-        Payload: {symbol, exchanges: [...], leverage}
+        not race an empty RAM cache. Logs a per-leg fingerprint so the
+        operator can eyeball multiplier/contract_size sanity before firing.
+
+        Payload: {legs: [[ex, sym], ...], leverage}
         """
         data = await request.json()
-        symbol = data["symbol"]
-        # Canonical CCXT ids are lowercase. Normalize at the boundary so any
-        # casing from the operator maps to the same engine dict keys.
-        exchanges = [ex.lower() for ex in data["exchanges"]]
+        # Canonical CCXT ids are lowercase. Normalize at the boundary.
+        legs_input = [(ex.lower(), sym) for ex, sym in data["legs"]]
         leverage = data["leverage"]
         try:
             # 1. Instantiate all exchanges concurrently (loads markets, spawns heartbeat)
-            await asyncio.gather(*(self.get_or_create_exchange(ex) for ex in exchanges))
+            ex_ids = list({ex for ex, _ in legs_input})
+            await asyncio.gather(*(self.get_or_create_exchange(ex) for ex in ex_ids))
 
-            # 2. Set leverage per exchange — audit silent per-venue failures
-            log(f"Setting leverage to {leverage}x for {symbol} on {exchanges}...", "WARMUP")
+            # 2. Build ExecutionLeg primitives from live CCXT markets
+            legs = []
+            for ex_id, symbol in legs_input:
+                try:
+                    market = self.exchanges[ex_id].markets[symbol]
+                except KeyError:
+                    return web.json_response(
+                        {"error": f"Symbol {symbol} not found on {ex_id}. Verify spelling."},
+                        status=400,
+                    )
+                legs.append(ExecutionLeg.from_market(ex_id, market))
+
+            # 3. Set leverage per leg — audit silent per-venue failures
+            log(
+                f"Setting leverage to {leverage}x on {len(legs)} legs: "
+                f"{[(leg.exchange, leg.symbol) for leg in legs]}",
+                "WARMUP",
+            )
             leverage_results = await asyncio.gather(
-                *(self.exchanges[ex].set_leverage(leverage, symbol) for ex in exchanges),
+                *(self.exchanges[leg.exchange].set_leverage(leverage, leg.symbol) for leg in legs),
                 return_exceptions=True,
             )
             failed = [
-                ex for ex, res in zip(exchanges, leverage_results)
+                f"{leg.exchange}:{leg.symbol}"
+                for leg, res in zip(legs, leverage_results)
                 if isinstance(res, Exception)
             ]
-            for ex, res in zip(exchanges, leverage_results):
+            for leg, res in zip(legs, leverage_results):
                 if isinstance(res, Exception):
-                    log(f"Leverage setup failed for {ex}: {res}", "WARMUP_ERROR")
+                    log(f"Leverage setup failed for {leg.exchange}:{leg.symbol}: {res}", "WARMUP_ERROR")
             if failed:
                 return web.json_response(
                     {"error": f"Warmup failed on {failed}. Check logs."}, status=400
                 )
 
-            # 3. Subscribe L2 streams (idempotent — no-op if already streaming)
+            # 4. Subscribe L2 streams (idempotent — no-op if already streaming)
             await asyncio.gather(
-                *(self.subscribe_order_book(ex, symbol) for ex in exchanges)
+                *(self.subscribe_order_book(leg.exchange, leg.symbol) for leg in legs)
             )
 
-            # 4. Block until first snapshot lands on each leg
-            log(f"Awaiting first L2 snapshot on {len(exchanges)} legs...", "WARMUP")
+            # 5. Block until first snapshot lands on each leg
+            log(f"Awaiting first L2 snapshot on {len(legs)} legs...", "WARMUP")
             await asyncio.gather(
-                *(self._await_first_snapshot(ex, symbol) for ex in exchanges)
+                *(self._await_first_snapshot(leg.exchange, leg.symbol) for leg in legs)
             )
 
-            log(f"Warmup complete. {symbol} at {leverage}x on {exchanges} — books live.", "WARMUP")
+            # 6. Leg fingerprint — human-eyeballable multiplier/contract_size sanity check.
+            # If two legs print prices that disagree by orders of magnitude, the
+            # operator kills the engine before placing the order. This is the runtime
+            # version of the empirical-probing methodology (the warmup IS a probe).
+            for leg in legs:
+                book = self.order_books[(leg.exchange, leg.symbol)]
+                top_of_book_native = (float(book["bids"][0][0]) + float(book["asks"][0][0])) / 2.0
+                log(
+                    f"LEG FINGERPRINT {leg.exchange}:{leg.symbol} "
+                    f"| base_coin={leg.base_coin} "
+                    f"| multiplier={leg.multiplier} contract_size={leg.contract_size} "
+                    f"| 1 native_contract = {leg.base_per_native} base_tokens "
+                    f"| 1 base_token ≈ ${leg.to_base_price(top_of_book_native):.10f}",
+                    "WARMUP",
+                )
+
+            log(
+                f"Warmup complete. {len(legs)} legs at {leverage}x — books live.",
+                "WARMUP",
+            )
             return web.json_response(
-                {"message": f"Warmup complete. {symbol} at {leverage}x on {exchanges}"}
+                {"message": f"Warmup complete. {len(legs)} legs at {leverage}x."}
             )
         except Exception as e:
             log(f"Warmup structural failure: {e}", "WARMUP_ERROR")
@@ -179,254 +271,289 @@ class ArbitrageEngine:
     async def handle_entry(self, request):
         """
         Drives the Synchronized Smart Slicing entry sequence.
-        Payload: {symbol, long, short, amount, min_entry_basis_bps, max_duration_s}
+        Payload: {long: [ex, sym], short: [ex, sym], base_amount,
+                  min_entry_basis_bps, max_duration_s}
         """
         data = await request.json()
-        symbol = data["symbol"]
-        long_ex_id = data["long"].lower()
-        short_ex_id = data["short"].lower()
-        target_qty = data["amount"]
+        long_ex, long_sym = data["long"]
+        short_ex, short_sym = data["short"]
+        long_ex = long_ex.lower()
+        short_ex = short_ex.lower()
+        target_qty_base = data["base_amount"]
         basis_floor_bps = data["min_entry_basis_bps"]
         max_duration_s = data["max_duration_s"]
 
-        # Existing position locks the routing — scale-ins must reuse the same legs
-        if symbol in self.positions:
-            pos = self.positions[symbol]
-            if pos["long_ex"] != long_ex_id or pos["short_ex"] != short_ex_id:
-                return web.json_response(
-                    {"error": f"Active position uses {pos['long_ex']}/{pos['short_ex']}. Cannot mix exchanges."},
-                    status=400,
-                )
-
-        if long_ex_id not in self.exchanges or short_ex_id not in self.exchanges:
+        if long_ex not in self.exchanges or short_ex not in self.exchanges:
             return web.json_response(
                 {"error": "Exchanges not warmed up. Run warmup first."}, status=400
             )
 
-        if (long_ex_id, symbol) not in self.order_books or (short_ex_id, symbol) not in self.order_books:
+        # Build the pair from live CCXT markets (boundary normalization)
+        try:
+            long_leg = ExecutionLeg.from_market(long_ex, self.exchanges[long_ex].markets[long_sym])
+            short_leg = ExecutionLeg.from_market(short_ex, self.exchanges[short_ex].markets[short_sym])
+            pair = ExecutionPair(long=long_leg, short=short_leg)
+        except KeyError as e:
+            return web.json_response(
+                {"error": f"Symbol not found in CCXT markets: {e}. Run warmup first."},
+                status=400,
+            )
+        except ValueError as e:  # base_coin mismatch — different underlyings
+            return web.json_response({"error": str(e)}, status=400)
+
+        pos_key = pair.key
+
+        # Existing position locks the routing AND the symbols. An asymmetric variant
+        # change (e.g. swapping `1000CHEEMS` for `1MCHEEMS` mid-position) counts as
+        # a different routing.
+        existing = self.positions.get(pos_key)
+        if existing:
+            if (existing["long"]["exchange"] != pair.long.exchange
+                    or existing["long"]["symbol"] != pair.long.symbol
+                    or existing["short"]["exchange"] != pair.short.exchange
+                    or existing["short"]["symbol"] != pair.short.symbol):
+                return web.json_response(
+                    {"error": (
+                        f"Active position uses {existing['long']['exchange']}:{existing['long']['symbol']} / "
+                        f"{existing['short']['exchange']}:{existing['short']['symbol']}. Cannot mix."
+                    )},
+                    status=400,
+                )
+
+        if (pair.long.exchange, pair.long.symbol) not in self.order_books \
+                or (pair.short.exchange, pair.short.symbol) not in self.order_books:
             return web.json_response(
                 {"error": "L2 books not live. Run warmup first."}, status=400
             )
 
-        if symbol in self._abort_events:
+        if pos_key in self._abort_events:
             return web.json_response(
-                {"error": f"Slicing loop already in flight for {symbol}. Abort it first."},
+                {"error": f"Slicing loop already in flight for {pos_key}. Abort it first."},
                 status=409,
             )
 
         abort_event = asyncio.Event()
-        self._abort_events[symbol] = abort_event
+        self._abort_events[pos_key] = abort_event
         try:
             result = await run_slicing_loop(
                 self,
-                symbol,
-                long_ex_id,
-                short_ex_id,
-                target_qty,
+                pair,
+                target_qty_base,
                 basis_floor_bps,
                 max_duration_s,
                 side="entry",
                 abort_event=abort_event,
             )
         except Exception as e:
-            log(f"Structural failure during entry on {symbol}: {e}", "CRITICAL")
+            log(f"Structural failure during entry on {pos_key}: {e}", "CRITICAL")
             asyncio.create_task(
                 asyncio.to_thread(
                     send_pushover,
                     f"{e}\nManual intervention required.",
-                    f"CRITICAL: ENTRY FAILED on {symbol}",
+                    f"CRITICAL: ENTRY FAILED on {pos_key}",
                     2,
                 )
             )
             return web.json_response({"error": f"Entry failed: {e}"}, status=500)
         finally:
-            self._abort_events.pop(symbol, None)
+            self._abort_events.pop(pos_key, None)
 
         if result.filled_base > 0:
-            if symbol in self.positions:
-                # Scale-in: qty-weight-blend entry VWAPs against the cumulative entry_qty
+            if pos_key in self.positions:
+                # Scale-in: qty-weight-blend entry VWAPs against the cumulative entry_qty_base
                 # (NOT the residual amount — exits don't dilute the entry-side average).
-                pos = self.positions[symbol]
-                old_entry_qty = pos.get("entry_qty", pos["amount"])
+                pos = self.positions[pos_key]
+                old_entry_qty = pos.get("entry_qty_base", pos["amount_base"])
                 new_entry_qty = old_entry_qty + result.filled_base
-                pos["entry_vwap_long"] = (
-                    pos.get("entry_vwap_long", 0.0) * old_entry_qty
-                    + result.vwap_long * result.filled_base
+                pos["entry_vwap_long_base"] = (
+                    pos.get("entry_vwap_long_base", 0.0) * old_entry_qty
+                    + result.vwap_long_base * result.filled_base
                 ) / new_entry_qty
-                pos["entry_vwap_short"] = (
-                    pos.get("entry_vwap_short", 0.0) * old_entry_qty
-                    + result.vwap_short * result.filled_base
+                pos["entry_vwap_short_base"] = (
+                    pos.get("entry_vwap_short_base", 0.0) * old_entry_qty
+                    + result.vwap_short_base * result.filled_base
                 ) / new_entry_qty
-                p_ref = (pos["entry_vwap_long"] + pos["entry_vwap_short"]) / 2.0
+                p_ref_base = (pos["entry_vwap_long_base"] + pos["entry_vwap_short_base"]) / 2.0
                 pos["entry_basis_bps"] = (
-                    (pos["entry_vwap_short"] - pos["entry_vwap_long"]) / p_ref * 10000.0
-                    if p_ref > 0 else 0.0
+                    (pos["entry_vwap_short_base"] - pos["entry_vwap_long_base"]) / p_ref_base * 10000.0
+                    if p_ref_base > 0 else 0.0
                 )
-                pos["entry_qty"] = new_entry_qty
-                pos["amount"] = new_entry_qty - pos.get("exit_qty", 0.0)
+                pos["entry_qty_base"] = new_entry_qty
+                pos["amount_base"] = new_entry_qty - pos.get("exit_qty_base", 0.0)
                 log(
-                    f"Scaled in. entry_qty={new_entry_qty} amount={pos['amount']} "
-                    f"entry_basis={pos['entry_basis_bps']:.2f}bps (halt={result.halt_reason})",
+                    f"Scaled in. entry_qty_base={new_entry_qty} amount_base={pos['amount_base']} "
+                    f"entry_basis_bps={pos['entry_basis_bps']:.2f} (halt_reason={result.halt_reason})",
                     "ENTRY",
                 )
             else:
-                self.positions[symbol] = {
-                    "long_ex": long_ex_id,
-                    "short_ex": short_ex_id,
-                    "amount": result.filled_base,
-                    "entry_qty": result.filled_base,
-                    "entry_vwap_long": result.vwap_long,
-                    "entry_vwap_short": result.vwap_short,
+                self.positions[pos_key] = {
+                    "long": self._serialize_leg(pair.long),
+                    "short": self._serialize_leg(pair.short),
+                    "amount_base": result.filled_base,
+                    "entry_qty_base": result.filled_base,
+                    "entry_vwap_long_base": result.vwap_long_base,
+                    "entry_vwap_short_base": result.vwap_short_base,
                     "entry_basis_bps": result.realized_basis_bps,
-                    "exit_qty": 0.0,
-                    "exit_vwap_long": None,
-                    "exit_vwap_short": None,
+                    "exit_qty_base": 0.0,
+                    "exit_vwap_long_base": None,
+                    "exit_vwap_short_base": None,
                     "exit_basis_bps": None,
                     "opened_at": now_str(),
                 }
                 log(
-                    f"Delta-neutral established for {symbol} amount={result.filled_base} "
-                    f"entry_basis={result.realized_basis_bps:.2f}bps (halt={result.halt_reason})",
+                    f"Delta-neutral established for {pos_key} amount_base={result.filled_base} "
+                    f"entry_basis_bps={result.realized_basis_bps:.2f} (halt_reason={result.halt_reason})",
                     "ENTRY",
                 )
             await asyncio.to_thread(save_state, self.positions)
         else:
             log(
-                f"Entry filled 0/{target_qty} {symbol} (halt={result.halt_reason}). No state change.",
+                f"Entry filled 0/{target_qty_base} {pos_key} (halt_reason={result.halt_reason}). No state change.",
                 "ENTRY",
             )
 
         return web.json_response({
             "filled": result.filled_base,
-            "target": target_qty,
+            "target": target_qty_base,
             "halt_reason": result.halt_reason,
-            "vwap_long": result.vwap_long,
-            "vwap_short": result.vwap_short,
+            "vwap_long_base": result.vwap_long_base,
+            "vwap_short_base": result.vwap_short_base,
             "realized_basis_bps": result.realized_basis_bps,
         })
 
     async def handle_exit(self, request):
         """
         Drives the Synchronized Smart Slicing exit sequence (reduceOnly IOCs).
-        Payload: {symbol, amount, min_exit_basis_bps, max_duration_s}
+        Payload: {pair, base_amount, min_exit_basis_bps, max_duration_s}
         """
         data = await request.json()
-        symbol = data["symbol"]
-        target_qty = data["amount"]
+        pos_key = data["pair"]
+        target_qty_base = data["base_amount"]
         basis_floor_bps = data["min_exit_basis_bps"]
         max_duration_s = data["max_duration_s"]
 
-        pos = self.positions.get(symbol)
+        pos = self.positions.get(pos_key)
         if not pos:
-            return web.json_response({"error": "No active position for this symbol."}, status=400)
+            return web.json_response({"error": f"No active position for {pos_key}."}, status=400)
 
-        long_ex_id, short_ex_id = pos["long_ex"], pos["short_ex"]
-        target_qty = min(target_qty, pos["amount"])
+        # Reconstruct the pair from saved state — markets must be loaded already
+        try:
+            long_leg = ExecutionLeg.from_market(
+                pos["long"]["exchange"],
+                self.exchanges[pos["long"]["exchange"]].markets[pos["long"]["symbol"]],
+            )
+            short_leg = ExecutionLeg.from_market(
+                pos["short"]["exchange"],
+                self.exchanges[pos["short"]["exchange"]].markets[pos["short"]["symbol"]],
+            )
+            pair = ExecutionPair(long=long_leg, short=short_leg)
+        except KeyError as e:
+            return web.json_response({"error": f"Markets not loaded: {e}"}, status=400)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
 
-        if symbol in self._abort_events:
+        target_qty_base = min(target_qty_base, pos["amount_base"])
+
+        if pos_key in self._abort_events:
             return web.json_response(
-                {"error": f"Slicing loop already in flight for {symbol}. Abort it first."},
+                {"error": f"Slicing loop already in flight for {pos_key}. Abort it first."},
                 status=409,
             )
 
         # Defensive subscribe in case streams dropped between pre_warm and now
         await asyncio.gather(
-            self.subscribe_order_book(long_ex_id, symbol),
-            self.subscribe_order_book(short_ex_id, symbol),
+            self.subscribe_order_book(pair.long.exchange, pair.long.symbol),
+            self.subscribe_order_book(pair.short.exchange, pair.short.symbol),
         )
         try:
             await asyncio.gather(
-                self._await_first_snapshot(long_ex_id, symbol, timeout=5.0),
-                self._await_first_snapshot(short_ex_id, symbol, timeout=5.0),
+                self._await_first_snapshot(pair.long.exchange, pair.long.symbol, timeout=5.0),
+                self._await_first_snapshot(pair.short.exchange, pair.short.symbol, timeout=5.0),
             )
         except TimeoutError as e:
             return web.json_response({"error": f"Books not live: {e}"}, status=400)
 
         abort_event = asyncio.Event()
-        self._abort_events[symbol] = abort_event
+        self._abort_events[pos_key] = abort_event
         try:
             result = await run_slicing_loop(
                 self,
-                symbol,
-                long_ex_id,
-                short_ex_id,
-                target_qty,
+                pair,
+                target_qty_base,
                 basis_floor_bps,
                 max_duration_s,
                 side="exit",
                 abort_event=abort_event,
             )
         except Exception as e:
-            log(f"Structural failure during exit on {symbol}: {e}", "CRITICAL")
+            log(f"Structural failure during exit on {pos_key}: {e}", "CRITICAL")
             asyncio.create_task(
                 asyncio.to_thread(
                     send_pushover,
                     f"{e}\nManual intervention required.",
-                    f"CRITICAL: EXIT FAILED on {symbol}",
+                    f"CRITICAL: EXIT FAILED on {pos_key}",
                     2,
                 )
             )
             return web.json_response({"error": f"Exit failed: {e}"}, status=500)
         finally:
-            self._abort_events.pop(symbol, None)
+            self._abort_events.pop(pos_key, None)
 
-        # Blend exit-side VWAPs against cumulative exit_qty (multi-leg unwinds).
+        # Blend exit-side VWAPs against cumulative exit_qty_base (multi-leg unwinds).
         if result.filled_base > 0:
-            old_exit_qty = pos.get("exit_qty", 0.0)
+            old_exit_qty = pos.get("exit_qty_base", 0.0)
             new_exit_qty = old_exit_qty + result.filled_base
-            old_exit_l = pos.get("exit_vwap_long") or 0.0
-            old_exit_s = pos.get("exit_vwap_short") or 0.0
-            pos["exit_vwap_long"] = (
-                old_exit_l * old_exit_qty + result.vwap_long * result.filled_base
+            old_exit_l = pos.get("exit_vwap_long_base") or 0.0
+            old_exit_s = pos.get("exit_vwap_short_base") or 0.0
+            pos["exit_vwap_long_base"] = (
+                old_exit_l * old_exit_qty + result.vwap_long_base * result.filled_base
             ) / new_exit_qty
-            pos["exit_vwap_short"] = (
-                old_exit_s * old_exit_qty + result.vwap_short * result.filled_base
+            pos["exit_vwap_short_base"] = (
+                old_exit_s * old_exit_qty + result.vwap_short_base * result.filled_base
             ) / new_exit_qty
-            p_ref = (pos["exit_vwap_long"] + pos["exit_vwap_short"]) / 2.0
+            p_ref_base = (pos["exit_vwap_long_base"] + pos["exit_vwap_short_base"]) / 2.0
             pos["exit_basis_bps"] = (
-                (pos["exit_vwap_long"] - pos["exit_vwap_short"]) / p_ref * 10000.0
-                if p_ref > 0 else 0.0
+                (pos["exit_vwap_long_base"] - pos["exit_vwap_short_base"]) / p_ref_base * 10000.0
+                if p_ref_base > 0 else 0.0
             )
-            pos["exit_qty"] = new_exit_qty
-            pos["amount"] -= result.filled_base
+            pos["exit_qty_base"] = new_exit_qty
+            pos["amount_base"] -= result.filled_base
 
         # Dust check: residual below either leg's min lot size means we cannot
         # legally trade it again — archive the closed trade and clear the ledger.
-        dust = max(
-            self._min_amount_in_base(long_ex_id, symbol),
-            self._min_amount_in_base(short_ex_id, symbol),
-        )
-        if pos["amount"] <= dust:
+        dust_base = self._pair_dust(pair)
+        if pos["amount_base"] <= dust_base:
             entry_basis = pos.get("entry_basis_bps", 0.0) or 0.0
             exit_basis = pos.get("exit_basis_bps", 0.0) or 0.0
             closed_record = {
-                "symbol": symbol,
-                "long_ex": pos["long_ex"],
-                "short_ex": pos["short_ex"],
-                "entry_qty": pos.get("entry_qty", 0.0),
-                "exit_qty": pos.get("exit_qty", 0.0),
-                "residual_dust": pos["amount"],
-                "entry_vwap_long": pos.get("entry_vwap_long", 0.0),
-                "entry_vwap_short": pos.get("entry_vwap_short", 0.0),
+                "base_coin": pos_key,
+                "long": pos["long"],
+                "short": pos["short"],
+                "entry_qty_base": pos.get("entry_qty_base", 0.0),
+                "exit_qty_base": pos.get("exit_qty_base", 0.0),
+                "residual_dust_base": pos["amount_base"],
+                "entry_vwap_long_base": pos.get("entry_vwap_long_base", 0.0),
+                "entry_vwap_short_base": pos.get("entry_vwap_short_base", 0.0),
                 "entry_basis_bps": entry_basis,
-                "exit_vwap_long": pos.get("exit_vwap_long", 0.0),
-                "exit_vwap_short": pos.get("exit_vwap_short", 0.0),
+                "exit_vwap_long_base": pos.get("exit_vwap_long_base", 0.0),
+                "exit_vwap_short_base": pos.get("exit_vwap_short_base", 0.0),
                 "exit_basis_bps": exit_basis,
                 "round_trip_basis_bps": entry_basis + exit_basis,
                 "opened_at": pos.get("opened_at"),
                 "closed_at": now_str(),
             }
             await asyncio.to_thread(append_closed_trade, closed_record)
-            del self.positions[symbol]
+            del self.positions[pos_key]
             log(
-                f"Position closed on {symbol}. round_trip_basis="
-                f"{closed_record['round_trip_basis_bps']:.2f}bps. Archived to closed_trades.json.",
+                f"Position closed on {pos_key}. round_trip_basis_bps="
+                f"{closed_record['round_trip_basis_bps']:.2f}. Archived to closed_trades.json.",
                 "EXIT",
             )
         else:
             log(
-                f"Exit filled {result.filled_base}/{target_qty} {symbol}, residual {pos['amount']}, "
-                f"exit_basis={pos.get('exit_basis_bps', 0.0):.2f}bps (halt={result.halt_reason}).",
+                f"Exit filled {result.filled_base}/{target_qty_base} {pos_key}, "
+                f"residual_base {pos['amount_base']}, "
+                f"exit_basis_bps={pos.get('exit_basis_bps', 0.0):.2f} (halt_reason={result.halt_reason}).",
                 "EXIT",
             )
 
@@ -434,33 +561,33 @@ class ArbitrageEngine:
 
         return web.json_response({
             "filled": result.filled_base,
-            "target": target_qty,
-            "remaining": self.positions.get(symbol, {}).get("amount", 0),
+            "target": target_qty_base,
+            "remaining": self.positions.get(pos_key, {}).get("amount_base", 0),
             "halt_reason": result.halt_reason,
-            "vwap_long": result.vwap_long,
-            "vwap_short": result.vwap_short,
+            "vwap_long_base": result.vwap_long_base,
+            "vwap_short_base": result.vwap_short_base,
             "realized_basis_bps": result.realized_basis_bps,
         })
 
     async def handle_abort(self, request):
         """
-        Signals a graceful halt to an in-flight slicing loop for `symbol`.
+        Signals a graceful halt to an in-flight slicing loop for `pair` (= base_coin).
         The loop will exit at its next cycle boundary — never mid-IOC, so
         delta-neutrality is preserved. Already-filled qty is kept as a hedged
         position via the normal entry/exit completion path.
-        Payload: {symbol}
+        Payload: {pair}
         """
         data = await request.json()
-        symbol = data["symbol"]
-        event = self._abort_events.get(symbol)
+        pos_key = data["pair"]
+        event = self._abort_events.get(pos_key)
         if event is None:
             return web.json_response(
-                {"error": f"No active slicing loop for {symbol}."}, status=404
+                {"error": f"No active slicing loop for {pos_key}."}, status=404
             )
         event.set()
-        log(f"Abort signaled for {symbol}. Loop will halt at next cycle boundary.", "ABORT")
+        log(f"Abort signaled for {pos_key}. Loop will halt at next cycle boundary.", "ABORT")
         return web.json_response(
-            {"message": f"Abort signaled for {symbol}. Halting at next cycle boundary."}
+            {"message": f"Abort signaled for {pos_key}. Halting at next cycle boundary."}
         )
 
     async def shutdown(self):
