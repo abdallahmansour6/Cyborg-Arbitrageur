@@ -67,18 +67,14 @@
                     <warmup>Accepts target symbol, exchanges, and leverage. Triggers the Engine to authenticate, download market rules to RAM, set leverage, subscribe to both legs' L2 order book streams, and establish keep-alive connections prior to any execution pressure.</warmup>
                     <entry>
                         Initiates the Synchronized Smart Slicing sequence.
-                        Format: `entry --symbol {market} --long {venue} --short {venue} --amount {base_qty} --min-entry-basis-bps {floor} --max-duration-s {seconds}`
-                        Example: `entry --symbol XRP/USDT:USDT --long phemex --short gate --amount 26300 --min-entry-basis-bps -25 --max-duration-s 45` 
                         Logic: The engine drives the slicing loop to fulfill the base quantity, enforcing the basis floor, recovering any fraction imbalances instantly, and halting gracefully if the duration expires.
                     </entry>
                     <exit>
                         Unwinds an active dual-leg position. 
-                        Format: `exit --symbol {market} --amount {base_qty} --min-exit-basis-bps {floor} --max-duration-s {seconds}`
                         Logic: Reverses the directional routing of `<entry>`. The engine evaluates the real-time order books, dispatching synchronized reduce-only IOC slices strictly when the projected exit basis mathematically satisfies or exceeds the `--min-exit-basis-bps` floor. It flattens residual imbalances instantly and clears the RAM state upon successful depletion.
                     </exit>
                     <abort>
                             Signals a graceful halt to an in-flight slicing loop.
-                            Format: `abort --symbol {market}`
                             Logic: The engine breaks the loop at the next cycle boundary — never mid-IOC — preserving accumulated fills as a perfectly hedged position. The daemon, RAM state, and WebSocket streams remain hot for immediate re-engagement.
                     </abort>
                     </commands>

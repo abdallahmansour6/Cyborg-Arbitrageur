@@ -1,185 +1,35 @@
-This is the context tree of the 'Cyborg Execution Engine': {
-    <context>
-    I'm a 26-year-old software developer. I've taken an indefinite break from work to strengthen/explore myself, expand my interdisciplinary knowledge graph, and venture into solo projects. My design/architectonic ethos is to be lean, rapid, and iterative, so that I can touch and explore the widest possible set of solution spaces for whatever we are pursuing. We gotta be nimble and think outside the box to eliminate the ordinary clutter/overhead as much as possible, while crafting solid and reliable artifacts. We achieve this nimbleness by leveraging high-impact architectural/systemic decisions/primitives before hitting diminishing returns, not by taking superficial trade-offs that degrade the clarity or solidity of our solutions.
-    
-    <project>
-        I'm exploring cross-exchange Crypto Perp-Perp funding rate arbitrage. My goal is to actively hunt and rotate capital into localized, extreme funding rate anomalies (e.g., 500% - 1000%+ APY) while maintaining strict delta-neutrality. 
+@C:\Users\Abdallah Mansour\Desktop\Arb Scanalytics\FIELD_NOTES.md @C:\Users\Abdallah Mansour\Desktop\Arb Scanalytics\probes.py 
+**Context & Background:**
+I am building a high-frequency, cross-exchange crypto perp-perp arbitrage "Execution Engine" in Python using CCXT Pro. It is an always-on, stateful async daemon that executes a "Synchronized Smart Slicing" algorithm to capture funding rate anomalies via dual-leg, delta-neutral IOC limit orders.
 
-        <operational_model>
-            I approach this as a discretionary "Cyborg" Arbitrageur. I manually filter out micro-caps to avoid low-liquidity manipulation. I manually evaluate the viability of an anomaly using a strict "Breakeven Epochs" calculation ((Total Projected Basis Cost + Total Taker Fees) / Epoch Yield) to determine if the anomaly's lifespan justifies the deployment. I built Scanalytics (Scanner and analytics tool) to be my primary radar/scanner, cross-referenced with Coinglass and Velo Data. I strictly trade USDT-margined perpetual futures on both legs (e.g., Long Binance / Short Bybit, Long KuCoin / Short OKX) to bypass spot borrow costs and liquidity issues. I strictly avoid Inverse/Coin-margined perps to prevent non-linear payoff drift (Quanto risk). I deploy 100% of allocated capital (no idle stables). I cap leverage at 1x to 2x for natural liquidation buffers (95% to 45% distance). I utilize a "Sip and Evaluate" execution workflow. I treat `--min-*-basis-bps` as a discretionary live knob: I fire with a tight floor, observe fill velocity in the engine console, and abort+retune+re-fire if the basis proves too tight against the trade's viable window or too loose against the captured edge.
+You have access to the current Execution Engine codebase in my workspace.
 
-        </operational_model>
+Previously, I built a separate project (a Market Scanner) to find these anomalies. While building the Scanner, I realized that crypto exchange APIs are chaotic: documentation lies, CCXT abstractions leak, and exchanges use vastly different conventions and have idiosyncrasies. To solve this, I instituted a strict **"Probing Methodology and Field Notes"** architecture. I built standalone scripts to empirically test live API endpoints and documented the verified truths in a living markdown file. The Scanner's core logic *only* relies on these verified truths.
 
-        <risk_philosophy>
-            I accept the counterparty/exchange insolvency risks. I prioritize absolute delta-neutrality and architectural simplicity over micro-optimizations in fee reduction. The 'Anchor Leg' (Maker/Taker) tactic is explicitly rejected as a premature optimization for the current capital tier ($25k). The 'Unhedged Execution Window' risk (directional exposure during the microsecond gap between a maker-fill and a taker-hedge) and the order-book-top chasing complexities (API rate-limit exhaustion, anti-flap hysteresis, and crash-recovery for half-filled resting orders) pose systemic threats/complexities that outweigh the marginal fee savings. Taker fees and managed slippage are accepted as a necessary cost of zero directional risk.
-        </risk_philosophy>
+I have attached the Scanner's `FIELD_NOTES.md` and `probes.py` as inspiration so you can see the rigor and format of this approach.
 
-        <system_architecture>
-            A custom, high-frequency, event-driven arbitrage system built with Python and CCXT Pro. Hosted on a Singapore VPS to optimize the geographic latency barycenter across 14 target Asian exchange matching engines. The architecture strictly separates network-heavy preparation from microsecond execution via a unified stateful Engine and a lightweight IPC terminal.
+**Recent Architectural Context (2026-05-08):**
+The codebase just landed an asymmetric-symbols refactor that introduced `primitives.py` (`ExecutionLeg` / `ExecutionPair` / `parse_base`). Per-leg multiplier and `contract_size` knowledge is now centralized in these primitives; engine and execution code consume them via `to_native_qty` / `to_base_qty` / `to_base_price`. The warmup handler already emits a `LEG FINGERPRINT` log line per leg — a one-shot dump of (base_coin, multiplier, contract_size, per-1×-base price) intended as a human-eyeballable sanity gate before any entry. **This is the seed pattern for engine-side runtime probing.** The new probing system should integrate with and extend it (more runtime probes triggered at warmup or on demand), not parallel-implement it.
 
-            <local_persistence>
-                <position_state format="JSON">A physical crash-recovery ledger mapping active pairs, base amounts, and assigned exchanges. Asynchronously written to by the Engine; acts strictly as a backup to the live RAM state.</position_state>
-                <transaction_log format="File">An OS-buffered, timestamped physical log recording execution parameters, API responses, and structural error events without blocking the event loop.</transaction_log>
-            </local_persistence>
+**The Goal:**
+The Execution Engine was built before I adopted this empirical methodology. It currently relies on dangerous "clean world" assumptions (e.g., assuming CCXT class names map perfectly, assuming WebSocket streams never silently die, assuming order-create responses always carry fill data).
 
-            <core_engine type="Always-On Async Process">
-                The monolithic state manager and execution processor. Maintains a local HTTP server (port 8080) to receive IPC commands, pre-loads exchange market rules into RAM, and holds persistent REST keep-alive connections. Maintains real-time WebSocket streams for `watch_order_book` to enable 0ms local dual-L2 cache reads during execution. Enforces a strict single-active-slicing-loop invariant per symbol: any concurrent entry/exit attempt against an already-executing symbol is rejected, eliminating state-mutation races on the position ledger and providing the natural addressing for abort signals.
+I want to establish a bespoke **Probing Methodology and Field Notes ecosystem specifically for the Execution Engine.**
 
-                <execution_routing architecture="Synchronized Smart Slicing">
-                    Execution operates as a genuine two-book arbitrage processor. Both legs are treated as equal constraints. The engine dynamically subdivides large notional targets into slices based on real-time order book depth to execute concurrent, delta-neutral takers.
+**Your Task:**
+Please act as a senior architectural engineer. You will own the probe → field-notes → implementation cycle end to end. Pause and ask me when you hit something only the operator can do — funding a venue's perp account, rotating API-key scopes or permissions, per-run authorization for capital-at-risk probes, or any other prerequisite on the exchange interface — and I'll handle it on my side before you continue. Do not just blindly port the Scanner's logic. The Engine is about *execution* and *state*, not just data gathering. I want you to explore and design a probing architecture tailored to the Engine's unique kinetic physics.
 
-                    <basis_gating_model>
-                        The core execution gate is Net Basis, rejecting leg-local slippage ceilings. 
-                        - Entry Basis Projection: $B_{real} = (VWAP_{short}^{bid} - VWAP_{long}^{ask}) / P_{mid}$
-                        - Exit Basis Projection: $B_{real} = (VWAP_{long}^{bid} - VWAP_{short}^{ask}) / P_{mid}$
-                        The gating parameters are `--min-entry-basis-bps` and `--min-exit-basis-bps`. The engine will not execute a slice unless the projected $B_{real}$ is mathematically greater than or equal to the defined floor. This model natively adapts to favorable inter-exchange price deltas and automatically captures basis convergence during position unwinding.
-                    </basis_gating_model>
+Please provide a strategic roadmap and initial implementations for the following:
 
-                    <dynamic_depth_oracle>
-                        On each tick, the engine simultaneously traverses both L2 RAM caches, calculating the VWAP-by-depth for each book. It mathematically finds the maximum slice size $S$ that satisfies the basis floor across both VWAPs. To protect against spoofed "phantom liquidity" and microsecond network latency, the engine applies an aggressive discount factor (e.g., 50%) to this theoretically safe volume to determine the final dispatch size.
-                    </dynamic_depth_oracle>
+1.  **Execution-Focused Probes:** Design a probing architecture (e.g., `engine_probes.py`) to empirically validate our execution assumptions. Provide initial implementations for **2–3 representative probes covering different safety classes** (introspection, safe-by-construction orders, capital-at-risk one-offs, continuous watchdogs), with the rest as roadmap stubs in `ENGINE_FIELD_NOTES.md`. *To give you an idea of the caliber I am looking for, here are some execution physics I suspect we need to probe:*
+    *   **IOC & reduceOnly Honor:** How do we verify an exchange *actually* cancels an IOC instead of resting it? (Perhaps safe-by-construction, sub-min-lot orders far from the spread?)
+    *   **Receipt Shapes:** Verifying CCXT receipts actually populate fill fields (`average`, `cost`+`filled`) so our `_fill_vwap()` math doesn't return 0.0. Equally critical — and orthogonal — is **whether the placement response is fill-resolved at all on each venue**, or whether the venue returns only an `orderId` and requires a follow-up `fetch_order` to read the settled IOC outcome. A venue that silently returns all-None fill fields on placement will look like a zero-fill to naive receipt accounting and let asymmetric exposure accumulate cycle after cycle without any state update — the engine's books stay clean while real venue-side positions diverge.
+    *   **Unit Conventions:** Empirically testing `contractSize` math against base quantities.
+    *   **L2 Delivery:** Bounding the time to first snapshot delivery.
+    *   *What else should we be probing to make execution bulletproof? Expand on this.*
 
-                    <ioc_enforcement>
-                        Slices are dispatched synchronously as Immediate-Or-Cancel (IOC) Limit orders. The limit prices attached to the IOCs are derived directly from the deepest acceptable level computed by the VWAP-by-depth math. This physically forces the exchange matching engines to reject any partial fill that would push the execution beyond the acceptable basis floor.
-                    </ioc_enforcement>
+2.  **Engine Field Notes:** Draft the structure for an `ENGINE_FIELD_NOTES.md` document. Based on your review of the current Engine codebase and CCXT execution quirks, what categories and tables/maps need to be tracked here to ensure our slicing loop and imbalance recovery never encounter a surprise in production?
 
-                    <leg_synchronization_recovery>
-                        Following concurrent IOC dispatch, the engine diffs the execution receipts (`filled` amounts). If an asymmetric fill occurs (e.g., liquidity vanished on one leg prior to matching), the engine immediately fires an uncapped standard Market Order on the lagging leg to restore perfect delta-neutrality. Recovery explicitly bypasses basis gating; absolute neutral exposure dominates marginal execution costs on fractional remainders.
-                    </leg_synchronization_recovery>
+3.  **Vulnerability Identification:** Review the current Engine codebase (which you have access to). Point out the top architectural areas where the Engine is currently making dangerous assumptions that should be replaced by our new empirical probing methodology. How should we refactor the Engine's core abstractions (like how it handles **execution receipts** (resolution + fill-state correctness), **WebSocket stream liveness** (silent staleness detection), or **order book sufficiency** (depth / spread / age sanity at slice time)) to align with this new rigorous mindset?
 
-                    <iterative_slicing_loop>
-                        The execution engine runs a continuous slicing loop that evaluates the order books, dispatches IOC slices, and enforces imbalance recovery. After each cycle, the loop yields briefly to the event loop (e.g., 1-2 seconds) to allow high-frequency market makers to replenish the consumed liquidity. This cycle adapts dynamically to the market's heartbeat—firing larger slices when liquidity is thick, and smaller slices when it is thin. The slicing loop halts gracefully on any of: total target notional fully deployed, `--max-duration-s` deadline expiry, operator-issued abort signal, or remaining residual falling below the per-leg dust floor (no longer tradeable). If the deadline is reached, the engine ceases execution immediately; the accumulated, partially filled quantity is preserved as a valid, perfectly hedged position, ensuring that time-pressure never forces a yield-destroying slippage event.
-                    </iterative_slicing_loop>
-                </execution_routing>
-
-                <telemetry status="postponed for now">
-                    Background asyncio tasks running within the same event loop.
-                    <margin_skew_monitor protocol="REST Polling">
-                        Evaluates notional drift caused by asymmetric unrealized PnL across legs. Periodically polls account equity on both active exchanges and calculates the imbalance: `Skew = (Max_Equity - Min_Equity) / Total_Equity`. If the skew exceeds a defined safety threshold (e.g., 60%), it dispatches a high-priority Pushover alert prompting the operator to manually rebalance margin (transfer USDT). It explicitly avoids automated liquidation rollbacks, keeping the engine strictly focused on execution.
-                    </margin_skew_monitor>
-                    <yield_evasion protocol="REST Polling">Polls predicted funding rates to trigger preemptive dual-leg exits prior to unfavorable payout cycles.</yield_evasion>
-                </telemetry>
-            </core_engine>
-
-            <cli_terminal type="IPC Client">
-                A lightweight, stateless command-line interface acting as a "dumb terminal" to pass human-driven routing signals to the Core Engine.
-                <commands>
-                    <warmup>Accepts target symbol, exchanges, and leverage. Triggers the Engine to authenticate, download market rules to RAM, set leverage, subscribe to both legs' L2 order book streams, and establish keep-alive connections prior to any execution pressure.</warmup>
-                    <entry>
-                        Initiates the Synchronized Smart Slicing sequence.
-                        Format: `entry --symbol {market} --long {venue} --short {venue} --amount {base_qty} --min-entry-basis-bps {floor} --max-duration-s {seconds}`
-                        Example: `entry --symbol XRP/USDT:USDT --long phemex --short gate --amount 26300 --min-entry-basis-bps -25 --max-duration-s 45` 
-                        Logic: The engine drives the slicing loop to fulfill the base quantity, enforcing the basis floor, recovering any fraction imbalances instantly, and halting gracefully if the duration expires.
-                    </entry>
-                    <exit>
-                        Unwinds an active dual-leg position. 
-                        Format: `exit --symbol {market} --amount {base_qty} --min-exit-basis-bps {floor} --max-duration-s {seconds}`
-                        Logic: Reverses the directional routing of `<entry>`. The engine evaluates the real-time order books, dispatching synchronized reduce-only IOC slices strictly when the projected exit basis mathematically satisfies or exceeds the `--min-exit-basis-bps` floor. It flattens residual imbalances instantly and clears the RAM state upon successful depletion.
-                    </exit>
-                    <abort>
-                            Signals a graceful halt to an in-flight slicing loop.
-                            Format: `abort --symbol {market}`
-                            Logic: The engine breaks the loop at the next cycle boundary — never mid-IOC — preserving accumulated fills as a perfectly hedged position. The daemon, RAM state, and WebSocket streams remain hot for immediate re-engagement.
-                    </abort>
-                    </commands>
-                </cli_terminal>
-
-            </system_architecture>
-        </project>
-    </context>
-} and Here is the Context tree for the 'Scanner and analytical tool' (Arb Scanalytics):{
-    
-    <context>
-    I'm a 26-year-old software developer. I've taken an indefinite break from work to strengthen/explore myself, expand my interdisciplinary knowledge graph, and venture into solo projects. My design/architectonic ethos is to be lean, rapid, and iterative, so that I can touch and explore the widest possible set of solution spaces for whatever we are pursuing. We gotta be nimble and think outside the box to eliminate the ordinary clutter/overhead as much as possible, while crafting solid and reliable artifacts. We achieve this nimbleness by leveraging high-impact architectural/systemic decisions/primitives before hitting diminishing returns, not by taking superficial trade-offs that degrade the clarity or solidity of our solutions.
-
-    <project>
-        A proprietary funding-rate and basis anomaly scanner for Crypto Perp-Perp arbitrage. Complements—but remains strictly decoupled from—the execution engine. Surfaces localized, pair-specific anomalies across the same 13 Asian venues the engine routes to, normalizes them into comparable units, and ranks them by deployment viability. Doubles as a longitudinal research substrate: every observation is persisted to build proprietary datasets (anomaly half-life, cross-exchange lead-lag, basis behavior during spikes, post-payout mean-reversion) that no public scanner exposes. we can edit or remove CEXs in the future. The initial 13 are: ["BINANCE",  "BINGX",  "BITGET",  "BITMART",  "BYBIT",  "COINEX",  "[[[GATE.IO](http://GATE.IO)](http://GATE.IO)",  "HTX",  "KUCOIN",  "MEXC",  "OKX",  "PHEMEX",  "[[XT.COM](http://XT.COM)](http://XT.COM)"]]
-
-        <positioning_rationale>
-            Public scanners (Coinglass, Zeek, Velo) are optimized for a broad retail audience and display raw per-epoch rates across heterogeneous funding intervals, which is actively misleading for viability math. This scanner encodes the operator's specific gates natively: venue-parity with the engine's routing set, epoch-normalized yield as a first-class unit, and automated Breakeven Epochs ranking. The long-term compounding asset is the historical dataset itself, not the live scanner view.
-        </positioning_rationale>
-
-        <architectural_primitives>
-            <persistence_substrate>DuckDB embedded over partitioned Parquet files. Zero-daemon, columnar, analytical-SQL native, portable artifacts. Rejects Postgres (ops overhead, weak on window-heavy columnar scans), InfluxDB (schema rigidity during research phase), and SQLite (row-store, poor for analytical scans over millions of rows). Parquet partitioning: year=/month=/day=/, append-only per-cycle. A daily compaction job (idempotent, atomic per venue) consolidates each prior day's per-cycle files into one file per venue — pure storage optimization, no schema or query-semantic change.</persistence_substrate>
-
-            <canonical_schema enforcement="normalized at collector boundary">
-                Every observation conforms to a single locked row shape; exchange-specific idiosyncrasies never leak downstream.
-                Fields: ts_utc (ms), exchange (canonical slug), symbol_canonical (CCXT unified, e.g., BTC/USDT:USDT), funding_rate (raw per-epoch upcoming-boundary rate; refines as TWAP-of-premium-index accumulates), funding_interval_h (positive float, hours; 1 / 4 / 8 most common), predicted_rate (forward forecast for the cycle AFTER the upcoming one — populated only where the venue publishes it), next_funding_ts (UTC-aligned settlement timestamp; mathematically derived from interval when the venue does not publish a per-symbol value), mark_price, index_price, last_price (three price columns of decreasing precision, separate primitives; downstream queries opt into precision tradeoffs explicitly), open_interest_usd, volume_24h_usd, apy_norm ($r \cdot 8760 / T_{epoch}$, computed and stored).
-            </canonical_schema>
-
-            <integrity_invariant>
-                Every schema field has exactly one authoritative per-venue source. If the source is missing for a row, the field is NULL. No cascading fallbacks (e.g., last-trade-price substituted for mark_price, default 8h for an unknown interval) — those silently corrupt the longitudinal dataset, which is the project's compounding asset. The collector enforces the invariant at the boundary; new venues require probe-driven verification of every per-field source before integration.
-            </integrity_invariant>
-
-            <ingestion_topology>REST polling at 30s cadence, one async task per venue. Per-venue strategy is bespoke — batch funding endpoints where preserved, [[ticker.info](http://ticker.info)](http://ticker.info) paths where the data is piggybacked there, per-symbol fan-out or native HTTP where neither works. WebSockets explicitly rejected for this layer: the scanner's physics is wide-and-shallow across hundreds of symbols, inverse of the engine's deep-and-narrow single-pair streams. Aggregate request budget remains comfortably under each venue's public rate limit even with concurrency-bumped fan-outs.</ingestion_topology>
-
-            <process_boundary>Scanner and engine run as fully separate OS processes with independent lifecycles and failure domains. No shared runtime state. Any engine-side read of scanner data occurs strictly via DuckDB query against Parquet files or a read-only HTTP endpoint—never via in-memory coupling. Guarantees that scanner analytics pressure can never stall the engine's event loop.</process_boundary>
-        </architectural_primitives>
-
-        <components>
-            <collectors type="Async REST Pollers">One task per exchange. Pulls the per-venue authoritative source for each schema field (documented in FIELD_[[NOTES.md](http://NOTES.md)](http://NOTES.md)), applies USD conversion where required, computes $APY_{norm}$, appends to the active Parquet partition. Failure of any single venue is isolated and logged; sibling collectors continue uninterrupted.</collectors>
-
-            <verification_harness role="Per-venue source audit">[[audit.py](http://audit.py)](http://audit.py): re-probes every authoritative source per (venue, schema field) on demand against live CCXT. Run when CCXT is upgraded, when a venue's API rotates fields, or when adding a new venue. The output is the single source of truth for per-venue extraction; FIELD_[[NOTES.md](http://NOTES.md)](http://NOTES.md) mirrors it.</verification_harness>
-
-            <analytics_layer form="Parameterized SQL views over DuckDB">
-                <anomaly_candidates>Symbols where $|APY_{norm}| \geq \theta$ AND $volume_{24h} \geq V_{min}$ AND the anomaly has persisted across $\geq N$ consecutive observations. Persistence filter rejects single-tick spikes (data errors or already-decayed transients).</anomaly_candidates>
-                <cross_exchange_delta>For every symbol listed on $\geq 2$ venues, computes $\Delta r = r_{max} - r_{min}$ and ranks. Directly maps to candidate leg-pairs for the engine.</cross_exchange_delta>
-                <breakeven_epochs_ranking>Computes $E_{BE} = (C_{basis} + C_{fees}) / Y_{epoch}$ in SQL. Taker-fee constants and basis-cost estimates are configurable per venue-pair. Candidates sort by $E_{BE}$ ascending.</breakeven_epochs_ranking>
-            </analytics_layer>
-
-            <dashboard stack="Streamlit + Plotly" role="Live Radar/Scanner">Single-operator, [[localhost](http://localhost)](http://localhost)-bound. Surfaces the three analytics views as sortable tables plus per-symbol historical funding charts with cross-exchange overlay. Graduation rule: patterns earn a place on the dashboard only after proving themselves in the research layer.</dashboard>
-
-            <alerts transport="Pushover">Two surfaces: anomaly threshold-breach notifications driven by the analytics layer, plus a data-flow liveness watch that pings if no Parquet write is observed in a 5-minute window (cooldown to prevent spam during extended outages). Reuses the engine's Pushover credentials. Mobile surface is Pushover only; no native mobile app.</alerts>
-
-            <research_layer tooling="Jupyter/Marimo notebooks">Exploratory lab bench over the same DuckDB substrate. Hosts the proprietary pattern studies: anomaly half-life distributions, cross-exchange funding lead-lag, basis behavior during anomalies, post-payout mean-reversion. Free use of sklearn/statsmodels/scipy at this layer; nothing ships to the live radar without being expressible as clear SQL logic.</research_layer>
-            <diagram_of_proposed_architecture>
-                
-                ┌─────────────────────────────────────────────────┐
-                │  Collectors (async, one task per exchange)      │
-                │  → normalize → append Parquet partitions        │
-                └─────────────────────────────────────────────────┘
-                                        │
-                                        ▼
-                ┌─────────────────────────────────────────────────┐
-                │  DuckDB (embedded, reads Parquet directly)      │
-                └─────────────────────────────────────────────────┘
-                                        │
-                        ┌──────────────┼──────────────┐
-                        ▼              ▼              ▼
-                ┌──────────┐  ┌────────────┐  ┌───────────┐
-                │ Analytics│  │ Dashboard  │  │ Research  │
-                │  views   │  │ (Plotly)   │  │ notebooks │
-                │          │  │            │  │           │
-                └──────────┘  └────────────┘  └───────────┘
-                        │
-                        ▼
-                ┌──────────┐
-                │  Alerts  │  (Pushover hook, reusing engine's creds)
-                └──────────┘
-            </diagram_of_proposed_architecture>
-        </components>
-
-        <scope_guardrails form="explicit negative space for now">
-            <no_orderbook_history>Top-of-book snapshots only if needed. Deep L2 persistence is explicitly rejected as a storage and complexity trap.</no_orderbook_history>
-            <no_trade_tape>Tick-level trade ingestion out of scope.</no_trade_tape>
-            <no_auth_layer>Single-operator, [[localhost](http://localhost)](http://localhost)-bound, mirroring the engine's deployment posture.</no_auth_layer>
-        </scope_guardrails>
-
-        <deployment_posture>Singapore VPS, co-located with the engine but with fully independent lifecycle. Two systemd services — arb-collector (ingestion) and arb-dashboard (Streamlit radar) — plus two cron jobs (daily Parquet compaction, 5-minute liveness watch). The engine never shares runtime state with any of them; engine-side reads of scanner data go strictly through the Parquet substrate. Shares the VPS's geographic latency barycenter across the 13 target venues, though latency is not a first-order concern for the scanner's polling cadence.</deployment_posture>
-    </project>
-</context>
-
-} We are currently working on the Execution Engine project (the current project folder). I've also attached the codebase for the Scanner project (in one xml file). The Scanner is a purely observational tool that finds these anomalies.While building the Scanner, I discovered a harsh reality about crypto exchanges: Asymmetric Symbols and Multiplier Prefixes.
-Exchanges list the exact same underlying coin using different contract-size multipliers in the ticker name. For example, the token CHEEMS might be listed as 1000CHEEMS on Binance, 1MCHEEMS on Bitget, and CHEEMS on Coinex.
-Currently, the Execution Engine makes a dangerous "clean world" assumption. The CLI expects a single --symbol (e.g., XRP/USDT:USDT) and a single --amount. The Engine assumes this symbol is identical on both the long_exchange and short_exchange, and it applies the exact same raw --amount to both.
-If I were to arb Binance against Coinex using the current Engine, and passed --amount 1000000, it would send an order for 1,000,000 to Coinex (correct), and an order for 1,000,000 contracts of 1000CHEEMS to Binance (resulting in 1,000,000,000 CHEEMS). This would instantly leave me 1000x over-exposed on the Binance leg.
-The Reference (Scanner):
-In the Scanner's collector.py, I solved this by implementing a _MULTIPLIER_PREFIX regex parser, alongside _base_coin and _base_multiplier logic. The Scanner normalizes everything so cross-venue math works perfectly on a "true 1x base" level.
-Your Task:
-Please act as a senior architectural engineer. I need you to resolve this "Asymmetric Symbols & Multiplier Prefixes" vulnerability in the Execution Engine by porting the conceptual awareness from the Scanner.
-Please provide the architectural design and the code refactoring plan to achieve the following:
-CLI Refactoring: The CLI (cli.py) needs to accept asymmetric legs. How should the operator pass the specific long/short symbols and the target amount so that there is zero ambiguity? (The target amount passed by the operator should always represent the true 1x base quantity).
-The "ExecutionLeg" Primitive: Do not just hack if/else statements into the Engine. The current Engine passes symbol, long_ex_id, short_ex_id everywhere, which is now fundamentally strained. I want you to design a new architectural primitive (e.g., a dataclass representing an Execution Leg) that bundles the exchange, the specific symbol, and the multiplier.
-Execution & Math Normalization: Update the logic in execution.py (specifically dispatch_ioc_pair, _to_base_qty, etc.) and engine.py to seamlessly utilize this new primitive. The core slicing loop should operate purely in 1x Base Tokens, only converting to exchange-specific prefix units right before hitting normalize_amount.
-State Management: How should positions.json and the pre_warm() crash-recovery logic be updated to handle asymmetric legs?
-I am looking for a lean, elegant, and highly fault-tolerant implementation/primitives. Feel free to innovate on the design to make the Engine bulletproof.
+Be innovative. Think outside the box. I am looking for architectural primitives that make the Engine bulletproof, lean, and highly fault-tolerant based on empirical reality, not superficial assumptions.
