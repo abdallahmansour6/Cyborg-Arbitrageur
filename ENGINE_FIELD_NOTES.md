@@ -6,7 +6,7 @@ Empirical truth about the **execution surface** of every venue we trade. Code is
 
 ## Conventions (read first)
 
-**Timestamping.** Every entry — table row, anchor incident, methodology note — is dated `YYYY-MM-DD`. Append-only at the section level: when a fact is superseded, update in-place but keep the original timestamp visible alongside the new one (e.g., "verified 2026-05-09; re-verified 2026-05-10").
+**Timestamping.** Every new entry — table row, anchor incident, methodology note — is dated `YYYY-MM-DD HH:MM` (UTC). Append-only at the section level: when a fact is superseded, update in-place but keep the original timestamp visible alongside the new one (e.g., "verified 2026-05-09 04:03; re-verified 2026-05-10 08:42"). Pre-existing entries timestamped at date-only granularity (`YYYY-MM-DD`) are grandfathered — don't backfill, but use the full `HH:MM` form for everything new.
 
 **Status tags.** Each substantive entry carries one tag:
 
