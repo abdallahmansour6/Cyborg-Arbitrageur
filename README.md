@@ -1,14 +1,27 @@
 # Cyborg Arbitrageur
 
-Discretionary cross-exchange perp-perp funding-rate arbitrage system. Two processes — a long-running async **Engine** that owns all state, and a stateless **CLI** that pipes operator-driven routing signals to it over local HTTP.
+Discretionary cross-exchange perp-perp funding-rate arbitrage system. Three processes — a long-running async **Engine** that owns all execution state, a stateless **CLI** that pipes operator-driven routing signals to it over local HTTP, and an off-engine **pnl.py** analyzer that interprets closed trades into True PnL (price + funding − fees).
 
 ```
-[cli.py]  ──HTTP POST──▶  [engine.py daemon] ──CCXT Pro──▶  [exchanges]
+[cli.py]  ──HTTP POST──▶  [engine.py daemon]  ──CCXT Pro──▶  [exchanges]
    stateless                  always-on, stateful                  WS + REST
-   (one-shot)                 RAM caches + position ledger
+   (one-shot)                 RAM caches + position ledger              │
+                                       │                                │
+                                       ▼                                │
+                              [closed_trades.json] ◀──reads/mutates──── │
+                                       ▲                                │
+                                       │                                │
+                                       └──────── [pnl.py] ──────────────┘
+                                                  off-engine analyzer
+                                                  (CCXT REST: fetch_my_trades,
+                                                   fetch_funding_history)
 ```
 
-The Engine pre-loads market rules, holds persistent WebSocket L2 streams for every active leg, and executes the Synchronized Smart Slicing loop. The CLI never holds state — every invocation just dispatches one IPC call and prints the ack.
+The **Engine** pre-loads market rules, holds persistent WebSocket L2 streams for every active leg, and executes the Synchronized Smart Slicing loop. It also captures per-order forensic detail (order_id, fees, fills) into `closed_trades.json` on every dust-clear close.
+
+The **CLI** never holds state — every invocation just dispatches one IPC call and prints the ack.
+
+The **PnL analyzer** runs on demand. It enriches each closed trade's fees via `fetch_my_trades` (because some venues don't populate fees on the receipt) and joins funding payments via `fetch_funding_history`. Engine critical path is never burdened by these calls — pnl.py is its own process.
 
 ---
 
@@ -41,18 +54,52 @@ PUSHOVER_USER=...
 
 ### 3. File layout
 
+#### Engine runtime (always-on daemon)
+
 | File | Role |
 |------|------|
 | `engine.py` | Always-on async daemon. Run this first. |
 | `cli.py` | One-shot IPC client. Run per command. |
-| `execution.py` | Slicing logic (project, dispatch, recover). |
-| `primitives.py` | `ExecutionLeg` / `ExecutionPair` — all base↔native conversion knowledge. |
+| `execution.py` | Slicing logic (project, dispatch, recover, asymmetric-residual halt). |
+| `primitives.py` | `ExecutionLeg` / `ExecutionPair` / `FillReceipt` / `BookSnapshot` — typed boundary objects. |
+| `receipt_resolver.py` | Per-venue receipt resolution (R-Mode catalog, fetch_order resilience, fee dedup). |
+| `venue_overrides.py` | Single source of truth for per-venue quirks (R-Mode, leverage params, IOC params, min notional, etc.). |
 | `config.py` | CCXT Pro instance factory (env-driven creds). |
 | `utils.py` | Logging + JSON state I/O. |
 | `notifier.py` | Pushover P2 alerts on critical failures. |
-| `positions.json` | Crash-recovery ledger + open-position trade stats. Asynchronously written. |
-| `closed_trades.json` | Append-only archive of fully-closed round-trips. |
+| `ccxt_patches.py` | Monkey-patches for upstream CCXT bugs. |
+
+#### Off-engine analysis
+
+| File | Role |
+|------|------|
+| `pnl.py` | Realized PnL analyzer — reads `closed_trades.json`, enriches fees via `fetch_my_trades`, joins funding via `fetch_funding_history`, computes `true_pnl = price + funding − fees`. Run on demand. |
+
+#### Probes
+
+| File | Role |
+|------|------|
+| `engine_probes.py` | Class 1–4 probe registry (introspection → real-fill smoketests). Multi-command CLI. |
+| `probe_fee_shape.py` | Read-only characterization of `fetch_my_trades` fee shape across all 12 venues. |
+| `probe_venue_quirks.py` | Read-only characterization of `fetch_order` fees, `fetch_my_trades` limit caps, `since` parameter handling. |
+| `probe_funding_shape.py` | Read-only characterization of `fetch_funding_history` capability + shape across all 12 venues. |
+| `ccxt_bug_repro.py` | Standalone reproducers for upstream CCXT bugs. |
+
+#### State files (auto-written by engine and pnl.py)
+
+| File | Role |
+|------|------|
+| `positions.json` | Crash-recovery ledger + open-position trade stats. Includes `entry_order_records` / `exit_order_records` (Phase 1). Asynchronously written. |
+| `closed_trades.json` | Append-only archive of fully-closed round-trips. Includes per-order records (Phase 1) and `funding_history` (Phase 3). Mutated by `pnl.py` to enrich fees + funding. |
 | `transaction.log` | Append-only timestamped event log. |
+| `probe_logs/` | Structured JSONL outputs from probes (forensic anchors). |
+
+#### Reference docs
+
+| File | Role |
+|------|------|
+| `ENGINE_FIELD_NOTES.md` | Empirical truth surface — every venue quirk, anchor incident, and per-venue table. Updated whenever a probe surfaces something new. |
+| `../Arb-Scanalytics/FIELD_NOTES.md` | Sister-project Scanner's per-venue funding-rate field maps. Cross-reference for funding semantics. |
 
 ---
 
@@ -216,9 +263,12 @@ Every slicing loop returns one of:
 | `target` | Full target `--base-amount` filled. |
 | `deadline` | `--max-duration-s` expired. Partial position kept hedged. |
 | `aborted` | Operator issued `abort`. |
-| `dust` | Remaining qty below the larger of either leg's min lot size — untradeable. |
+| `dust` | Remaining qty below the per-cycle composite floor (max of either leg's min-lot OR min-notional/price, ceil-rounded to next snap step) — untradeable. |
+| `asymmetric_residual` | Post-recovery cycle ended with `cycle_qty_long_base != cycle_qty_short_base` by a tradeable amount. Engine halts to prevent further naked exposure accumulation. Per-leg `qty_long_base` / `qty_short_base` capture the actual venue exposure. Manual reconciliation required. Fires Pushover P2. |
 
 A `target` or `dust` halt on `exit` clears the ledger entry. Otherwise the residual is preserved.
+
+The `asymmetric_residual` halt was added 2026-05-10 after the bingx×xt incident where one leg silently filled while the other returned filled=0 — without the cycle-invariant halt, the loop would have re-fired and accumulated further naked exposure on the over-filling leg. The cycle-level invariant is now enforced explicitly: after dispatch + recovery, both legs must have the same base quantity (within the smaller leg's min-lot tolerance), or the loop halts.
 
 ---
 
@@ -245,6 +295,7 @@ The Engine fires Pushover **priority 2** (retry/expire bypasses DND) on:
 
 - **IOC dispatch failure** — either leg's `create_order` raised. The loop halts; the operator must reconcile manually (one leg may have filled).
 - **Recovery dispatch failure** — the uncapped market order on the lagging leg failed. Delta-neutrality is no longer guaranteed; immediate manual intervention required.
+- **Asymmetric residual halt** — the cycle-invariant check detected a tradeable imbalance after dispatch + recovery (one leg filled X base, the other filled Y, with `|X−Y|` ≥ smaller-leg min-lot). Per-venue exposure is reported in the alert payload (`long_filled=…`, `short_filled=…`, `residual=…`). Operator manually unwinds the over-filling leg via venue UI before re-engaging.
 
 Pre-flight 4xx errors do **not** alert (they're operator mistakes, not system failures):
 
@@ -270,7 +321,13 @@ Pre-flight 4xx errors do **not** alert (they're operator mistakes, not system fa
 | Historical fills, errors, halt reasons | `transaction.log` |
 | Current open positions + entry/exit VWAPs + realized basis | `positions.json` |
 | Round-trip records of fully-closed trades | `closed_trades.json` |
+| Per-order forensic detail (id, fees, fills) | `closed_trades.json[*].entry_order_records` / `.exit_order_records` |
+| Per-trade funding history events | `closed_trades.json[*].funding_history` |
+| Realized PnL view (price + funding − fees) | `python3 pnl.py` (renders to stdout) |
 | Final fill summary + halt reason | CLI stdout |
+| Per-venue execution quirks + anchor incidents | `ENGINE_FIELD_NOTES.md` |
+| Per-venue funding-rate field maps (sister project) | `../Arb-Scanalytics/FIELD_NOTES.md` |
+| Probe outputs (forensic JSON) | `probe_logs/` |
 
 The CLI ack summarizes the final state on completion (`filled_base=X/Y | halt_reason=Z | realized_basis_bps=…`, plus `remaining_base=R` for exits). Watch the Engine terminal for live slice-by-slice progress while a loop is running. The CLI exits non-zero on Engine errors and connection failures, so it's safe to chain in scripts.
 
@@ -303,7 +360,7 @@ At loop end (target / deadline / aborted / dust):
 
 ### Open-position schema (`positions.json`)
 
-Keyed by **base coin** (multiplier-stripped). All quantity fields are in 1× base tokens; all VWAPs are per-1×-base prices.
+Keyed by **base coin** (multiplier-stripped). All quantity fields are in 1× base tokens; all VWAPs are per-1×-base prices. Includes per-order records (Phase 1) so a closing exit can fold them into `closed_trades.json`.
 
 ```json
 {
@@ -319,7 +376,9 @@ Keyed by **base coin** (multiplier-stripped). All quantity fields are in 1× bas
     "exit_vwap_long_base":  0.0000064,
     "exit_vwap_short_base": 0.0000063,
     "exit_basis_bps": -15.87,                 // qty-weighted across all exits on this position
-    "opened_at": "2026-05-07 14:32:11.456"
+    "opened_at": "2026-05-07 14:32:11.456",
+    "entry_order_records": [ /* Phase 1: appended by every handle_entry call; folded into closed_trades.json on dust-clear */ ],
+    "exit_order_records":  [ /* Phase 1: appended by every handle_exit call */ ]
   }
 }
 ```
@@ -330,7 +389,7 @@ Scale-ins blend `entry_*_base` qty-weighted; partial exits blend `exit_*_base` q
 
 ### Closed-trade archive (`closed_trades.json`)
 
-Append-only list, one record per fully-closed round-trip:
+Append-only list, one record per fully-closed round-trip. Schema includes Phase 1 per-order records (engine-written) and Phase 3 funding history (pnl.py-mutated):
 
 ```json
 [
@@ -344,12 +403,190 @@ Append-only list, one record per fully-closed round-trip:
     "entry_vwap_long_base":  0.0000063, "entry_vwap_short_base": 0.0000064, "entry_basis_bps": 15.87,
     "exit_vwap_long_base":   0.0000064, "exit_vwap_short_base":  0.0000063, "exit_basis_bps":  -15.87,
     "round_trip_basis_bps": 0.0,
-    "opened_at": "...", "closed_at": "..."
+    "opened_at": "...", "closed_at": "...",
+
+    // Phase 1: per-order forensic + fee-source records (engine-written)
+    "entry_order_records": [
+      {"order_id": "...", "leg": "long",  "kind": "ioc",      "side": "buy",
+       "venue": "binance", "symbol": "1000CHEEMS/USDT:USDT",
+       "filled_native": 500.0, "filled_base": 500000.0,
+       "vwap_native": 0.0063, "vwap_base": 0.0000063,
+       "fees": [{"cost": 0.158, "currency": "USDT"}],
+       "ts": "2026-05-07 14:32:11.523"},
+      {"order_id": "...", "leg": "short", "kind": "ioc",      "side": "sell", ...},
+      {"order_id": "...", "leg": "short", "kind": "recovery", "side": "sell", ...}
+    ],
+    "exit_order_records":  [ ...same shape, side reversed... ],
+
+    // Phase 3: funding history per leg (pnl.py-mutated)
+    "funding_history": {
+      "long":  {"events": [{"ts": ..., "amount": -0.071, "currency": "USDT", ...}],
+                "total_usdt": -0.213, "non_usdt_events": []},
+      "short": {"events": [{"ts": ..., "amount":  0.170, "currency": "USDT", ...}],
+                "total_usdt":  0.510, "non_usdt_events": []}
+    }
   }
 ]
 ```
 
-`round_trip_basis_bps = entry_basis_bps + exit_basis_bps` — the spread component of PnL captured across the round-trip (both terms are profit-positive by construction). Funding revenue is layered on top from the exchange statements.
+`round_trip_basis_bps = entry_basis_bps + exit_basis_bps` — the spread component of PnL captured across the round-trip (both terms are profit-positive by construction). Per-record fees and funding events feed the off-engine `pnl.py` analyzer (see "PnL Analysis" below).
+
+---
+
+## PnL Analysis (True PnL primitive)
+
+The engine's job is execution. PnL interpretation is a separate process: `pnl.py` reads `closed_trades.json`, enriches each round-trip with venue-side data, and computes:
+
+```
+true_pnl = price_pnl + funding_pnl − fees_pnl
+```
+
+Three components, each with its own data source:
+
+| Component | Source | Engine writes? | pnl.py enriches? |
+|-----------|--------|----------------|------------------|
+| `price_pnl_usdt` | `qty × ((entry_short − entry_long) + (exit_long − exit_short))` from VWAPs in the closed-trade record | yes (VWAPs at engine cycle close) | no — pure math |
+| `fees_pnl_usdt` | Σ `order_records[*].fees.cost` in USDT (base-coin fees converted via `vwap_base`) | partial (some venues populate fees on receipt; some don't) | yes — calls `fetch_my_trades(symbol, limit=100)` per (venue, symbol), matches by `t['order']`, replaces captured fees with venue-canonical data |
+| `funding_pnl_usdt` | Σ signed `fetch_funding_history` events per leg over `[opened_at, closed_at]` | no | yes — calls `fetch_funding_history(symbol, limit=100)` per leg, client-filter by timestamp |
+
+### Architecture
+
+```
+[engine.py] ─writes order facts─▶ [closed_trades.json] ◀─enriches in-place─ [pnl.py]
+                                                       └─reads + renders─▶ [terminal/file]
+```
+
+The engine NEVER calls `fetch_my_trades` or `fetch_funding_history` — those would add latency to the slicing loop's critical path. pnl.py runs out-of-band whenever the operator wants a PnL view.
+
+### Run
+
+```bash
+# Default: enrich + persist + render table
+./venv/bin/python3 pnl.py
+
+# Per-exchange-pair filter
+./venv/bin/python3 pnl.py --long binance --short bybit --coin XRP --since 2026-05-01
+
+# Format options
+./venv/bin/python3 pnl.py --format json
+./venv/bin/python3 pnl.py --format csv > pnl.csv
+
+# Dry run — no API calls, no file mutation
+./venv/bin/python3 pnl.py --no-enrich --no-funding --no-write
+
+# Verbose — dumps each fetched event to stderr (useful for first
+# real funding event to validate sign convention per venue)
+./venv/bin/python3 pnl.py --verbose
+```
+
+### Output
+
+```
+closed_at           | pair          | coin | qty     | notional | rt_bps | price_pnl  | fees      | funding   | true_pnl
+2026-05-10 07:46:20 | binance:bybit | XRP  | 19.0000 |  26.9800 |  -1.41 | -0.003800  | 0.056658  | +0.000000 | -0.060458
+TOTAL               |               |      |         |          |        | -0.123930  | 0.714931  | +0.000000 | -0.838861
+
+Warnings:
+  2026-05-09 19:02:32 BTC: pre-Phase-1 trade — fees_pnl=0 is structural
+  2026-05-10 07:46:20 XRP (binance:bybit): non-USDT fee(s) excluded — see funding_history
+```
+
+### File mutation
+
+pnl.py writes back enriched `fees` (per order_record) and `funding_history` (per trade) to `closed_trades.json` via atomic write-temp-rename. The merge is race-safe against engine appends — if the engine writes a new closed trade during pnl.py's compute, the re-read merge preserves it (just unenriched until next pnl.py run).
+
+### Empirical foundations (per-venue quirks discovered)
+
+The pnl.py architecture trusts NOTHING per-venue without verification:
+
+- **All 12 venues duplicate `fee` and `fees[0]`** in CCXT receipts → universal dedup needed (`_dedupe_fees` with full-tuple key, type-normalize cost to float).
+- **htx `fetch_order` returns NEGATIVE fees** (sign convention vs cost-to-user) AND mixes string + float types → caught only by always-enrich pattern + type-normalize.
+- **bitmart fees in received currency**: USDT on sells, base coin (XRP) on buys → converted to USDT via `vwap_base`.
+- **xt and okx cap `fetch_my_trades(limit)` at 100** → `FETCH_MY_TRADES_LIMIT = 100` universal.
+- **KuCoin `since` parameter is unreliable** across time depths → omit `since`, client-filter by `opened_at`.
+- **bitget caps `fetch_funding_history(limit)` below 500** → `FETCH_FUNDING_HISTORY_LIMIT = 100` universal.
+- **bingx returns `t['id'] = None`** in fetch_my_trades (only venue) → we match on `t['order']` which IS populated.
+
+Full per-venue tables live in `ENGINE_FIELD_NOTES.md`. Re-runnable probes (`probe_fee_shape.py`, `probe_venue_quirks.py`, `probe_funding_shape.py`) regenerate the catalog on-demand.
+
+### Validation status
+
+- **Phase 1** (engine schema enrichment): live-verified across 6 venue pairs (binance×bybit single + multi-cycle, bingx×xt, htx×bitmart, gate×coinex, kucoinfutures×okx, mexc×bitget). 8 distinct venues confirmed.
+- **Phase 2** (fees enrichment): hand-math verified to 4-10 decimals on all 6 pairs; fee rates match published taker rates exactly. Scales correctly through 24 order_records on the multi-cycle test (6 cycles per side).
+- **Phase 2 recovery path** (kind='recovery' market orders on lagging leg): verified via mock-CCXT synthetic test. Real recovery has not fired in any smoketest (deep books = no asymmetric residual after symmetric snap); awaits production conditions where book thinness or precision asymmetry produces a residual.
+- **Phase 3** (funding integration): synthetic math validated; **awaits empirical sign-convention verification on first real long-hold trade** (≥one funding settlement boundary spanned). All 12 venues confirmed to support `fetchFundingHistory`.
+
+---
+
+## Probes
+
+Probes are runnable scripts that exercise individual code paths or characterize venue behavior. The taxonomy:
+
+### Class 1 — Introspection (read-only, no API calls)
+
+Pure-Python checks of internal state. Free.
+
+### Class 2 — Read-only API (no orders placed)
+
+Probes hit venues' read endpoints (markets, tickers, fetch_order, fetch_my_trades, etc.). Free.
+
+| Script | Purpose |
+|--------|---------|
+| `probe_fee_shape.py` | Per-venue `fetch_my_trades` fee shape characterization. |
+| `probe_venue_quirks.py` | Per-venue `fetch_order` fee shape, `fetch_my_trades` limit caps, `since` param honored. |
+| `probe_funding_shape.py` | Per-venue `fetch_funding_history` capability + entry shape. |
+
+Run:
+
+```bash
+./venv/bin/python3 probe_fee_shape.py
+./venv/bin/python3 probe_venue_quirks.py
+./venv/bin/python3 probe_funding_shape.py
+```
+
+Re-run on CCXT version updates or when adding a new venue. Outputs land in `probe_logs/` as structured JSON.
+
+### Class 3 — Capital at risk (real fills)
+
+Real orders placed; capital exposure during execution. Used for venue-specific empirical truth that read-only probes can't surface (sign conventions, eventual-consistency lags, etc.).
+
+```bash
+# Smoketest a venue pair end-to-end (warmup → entry → exit)
+./venv/bin/python3 engine_probes.py cross_venue_smoketest \
+  --long_spec=binance:XRP/USDT:USDT \
+  --short_spec=bybit:XRP/USDT:USDT \
+  --I-AM-FUNDED-AND-AUTHORIZED-FOR-BINANCE \
+  --I-AM-FUNDED-AND-AUTHORIZED-FOR-BYBIT
+
+# Diagnose receipt-resolution path on a single venue
+./venv/bin/python3 engine_probes.py fill_resolution \
+  --venue=kucoinfutures --I-AM-FUNDED-AND-AUTHORIZED-FOR-KUCOINFUTURES
+```
+
+The `--I-AM-FUNDED-AND-AUTHORIZED-FOR-{VENUE}` flag is a deliberate handshake — Class 3 probes refuse to run without it.
+
+### Class 4 — Watchdogs
+
+Long-running monitors. Currently empty (operator opted out — atomic-cycle invariants are the safety net).
+
+---
+
+## Field Notes & Empirical Truth
+
+Two markdown documents anchor empirical facts that aren't derivable from code:
+
+| Document | Scope |
+|----------|-------|
+| `ENGINE_FIELD_NOTES.md` | Per-venue execution behavior: R-Mode catalog (sync-zero / sync-null / eventual placement), receipt fee shape, fetch_my_trades/funding_history quirks, anchor incidents (asymmetric residual halt, htx negative-fee bug, bitmart base-coin fees, etc.). Updated whenever a probe surfaces something new. |
+| `../Arb-Scanalytics/FIELD_NOTES.md` | Sister-project Scanner's per-venue funding-rate field maps. Useful cross-reference for funding semantics (last-settled vs upcoming vs forward-forecast). |
+
+Read `ENGINE_FIELD_NOTES.md` before:
+- Adding a new venue
+- Investigating an unexpected halt
+- Changing receipt resolution or fee/funding logic
+- Suspecting a per-venue quirk
+
+The methodology is "field notes + probes": empirical observations get anchored in field notes; characterization probes are re-runnable so the catalog stays alive.
 
 ---
 
@@ -362,3 +599,8 @@ Append-only list, one record per fully-closed round-trip:
 - **Abort is atomic at cycle boundaries.** Dispatch + recovery is never interrupted mid-flight, so abort always leaves a perfectly hedged position.
 - **`enableRateLimit=False`** by design — we let exchange matching engines reject overruns rather than self-throttle.
 - **Recovery bypasses basis gating.** When asymmetric fill occurs, neutrality dominates marginal cost on a fractional remainder.
+- **Cycle-invariant halt is the safety net.** After dispatch + recovery, both legs must be symmetric within the smaller leg's min-lot tolerance, or the loop halts with `asymmetric_residual` and fires Pushover P2. Implicit invariants drift; explicit invariants halt. (Anchor: 2026-05-10 bingx×xt incident.)
+- **Receipt-captured fees are NOT trusted by pnl.py.** The engine writes whatever fees come naturally from receipt resolution, but pnl.py always re-fetches via `fetch_my_trades` because per-venue receipt fee shapes vary unpredictably (htx negative sign, bitmart base-coin currency, xt None values, etc.). Engine stays fast; pnl.py owns interpretation.
+- **The slicing loop's per-cycle floor is composite.** `max(both legs' min-lot, max(both legs' min-notional)/mid)` ceil-rounded to the next snap step. Dust threshold uses the same composite; recovery's dust check uses the target-leg's composite.
+- **Symmetric snap before dispatch.** Each cycle, the slice's base qty is snapped to the largest value that survives precision-rounding identically on BOTH legs. Without this, asymmetric leg precisions (e.g. KuCoin contract_size=10 vs OKX contract_size=100) silently produced asymmetric fills.
+- **Run pnl.py periodically.** For venues with short `fetch_my_trades` retention (KuCoin), running pnl.py within ~24h of trade close ensures fee enrichment captures the data before it ages out. The mutated `closed_trades.json` is then idempotent for subsequent runs.

@@ -38,12 +38,12 @@ both venues at the unpublished 5-USDT floor.
 import asyncio
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Tuple
 
 from primitives import BookSnapshot, ExecutionLeg, ExecutionPair, FillReceipt
 from receipt_resolver import resolve_receipt
-from utils import log
+from utils import log, now_str
 from venue_overrides import (
     ioc_limit_params_for,
     market_order_params_for,
@@ -131,6 +131,11 @@ class RecoveryFill:
     leg: str           # "long" | "short" — which leg got recovered
     base_qty: float    # base tokens filled by the recovery market order
     vwap_base: float   # average fill price in per-1x-base units
+    order_record: dict # pre-built order record (kind="recovery") — appended by
+                       # run_slicing_loop into the cycle's order_records accumulator
+                       # so engine.handle_entry/handle_exit can persist it into
+                       # positions.json and ultimately into closed_trades.json for
+                       # off-engine pnl.py analysis.
 
 
 @dataclass
@@ -152,6 +157,61 @@ class LoopResult:
     vwap_long_base: float       # qty-weighted VWAP for long leg in per-1x-base
     vwap_short_base: float      # qty-weighted VWAP for short leg in per-1x-base
     realized_basis_bps: float   # signed by side; entry: (vwap_S-vwap_L); exit: (vwap_L-vwap_S)
+    order_records: list = field(default_factory=list)
+                                # Per-order capture for the True PnL primitive (Phase 1).
+                                # One dict per IOC + per recovery market order. Each
+                                # carries: order_id, leg ("long"|"short"), kind
+                                # ("ioc"|"recovery"), side ("buy"|"sell"), venue, symbol,
+                                # filled_native, filled_base, vwap_native, vwap_base,
+                                # fees (CCXT-extracted), ts. handle_entry/handle_exit
+                                # extend positions.json[entry|exit_order_records] with
+                                # this list; closed_trades.json folds them in on
+                                # archival. Default factory because dataclass equality
+                                # tests with mutable defaults are a footgun.
+
+
+def _order_record_from_fill(
+    fr: FillReceipt,
+    *,
+    leg_role: str,
+    kind: str,
+    side: str,
+) -> dict:
+    """Build one self-sufficient order record from a resolved FillReceipt.
+
+    `leg_role` is the POSITION-side role ("long" | "short"), NOT the
+    order-side. An entry cycle dispatches one leg_role="long" with
+    side="buy" and one leg_role="short" with side="sell". A recovery
+    on the lagging short leg might be leg_role="short", side="buy"
+    (entry recovery) or leg_role="short", side="sell" (exit recovery).
+
+    `kind` ∈ {"ioc", "recovery"}. The two together (`leg`, `kind`)
+    are sufficient for pnl.py to attribute each fill to the correct
+    side of the basis trade.
+
+    Includes BOTH native + base fields for forensic auditing — operator
+    can cross-check the venue UI's native qty/price against `filled_native`
+    /`vwap_native` while pnl.py operates on `filled_base`/`vwap_base`
+    directly (no re-conversion needed). `fees` is the normalized CCXT
+    fee list (see `_fees_from_receipt` in receipt_resolver.py).
+
+    `ts` is the engine's wall clock at record-build time. Sufficient
+    granularity for funding-boundary attribution (funding boundaries
+    are hourly+, engine ts is millisecond)."""
+    return {
+        "order_id": fr.order_id,
+        "leg": leg_role,
+        "kind": kind,
+        "side": side,
+        "venue": fr.leg.exchange,
+        "symbol": fr.leg.symbol,
+        "filled_native": fr.filled_native,
+        "filled_base": fr.filled_base,
+        "vwap_native": fr.vwap_native,
+        "vwap_base": fr.vwap_base,
+        "fees": fr.fees,
+        "ts": now_str(),
+    }
 
 
 # ---------- Helpers ----------
@@ -877,7 +937,14 @@ async def recover_imbalance(
         "RECOVERY",
     )
 
-    return RecoveryFill(leg=target_name, base_qty=fr.filled_base, vwap_base=fr.vwap_base)
+    return RecoveryFill(
+        leg=target_name,
+        base_qty=fr.filled_base,
+        vwap_base=fr.vwap_base,
+        order_record=_order_record_from_fill(
+            fr, leg_role=target_name, kind="recovery", side=market_side,
+        ),
+    )
 
 
 # ---------- Main loop ----------
@@ -922,6 +989,15 @@ async def run_slicing_loop(
     cumulative_notional_short_base = 0.0
     cumulative_qty_long_base = 0.0
     cumulative_qty_short_base = 0.0
+
+    # Per-order capture for the True PnL primitive (Phase 1). Appended
+    # to inside the cycle: 2 IOC records + optional 1 recovery record.
+    # Persisted by handle_entry/handle_exit into positions.json so a
+    # closing exit can fold both sides into closed_trades.json for
+    # off-engine pnl.py analysis. NEVER cleared mid-loop — even on
+    # asymmetric_residual halt the records are returned so the operator
+    # has full forensic trail of what fired before the halt.
+    order_records: list = []
 
     # Static lot-only floor — for the SLICE START log line and as the
     # informational anchor. The OPERATING floor combines lot + notional
@@ -1057,6 +1133,18 @@ async def run_slicing_loop(
         vwap_long_base = fr_long.vwap_base
         vwap_short_base = fr_short.vwap_base
 
+        # Capture IOC order records for downstream PnL analysis. Side
+        # mapping mirrors dispatch_ioc_pair: entry → long buys, short sells;
+        # exit → long sells, short buys.
+        ioc_long_side = "buy" if side == "entry" else "sell"
+        ioc_short_side = "sell" if side == "entry" else "buy"
+        order_records.append(_order_record_from_fill(
+            fr_long, leg_role="long", kind="ioc", side=ioc_long_side,
+        ))
+        order_records.append(_order_record_from_fill(
+            fr_short, leg_role="short", kind="ioc", side=ioc_short_side,
+        ))
+
         recovery = await recover_imbalance(
             engine, pair, base_filled_long, base_filled_short, side,
             mid_price_base=cycle_mid_price_base,
@@ -1069,6 +1157,7 @@ async def run_slicing_loop(
         cycle_notional_short_base = vwap_short_base * base_filled_short
 
         if recovery is not None:
+            order_records.append(recovery.order_record)
             if recovery.leg == "long":
                 cycle_qty_long_base += recovery.base_qty
                 cycle_notional_long_base += recovery.vwap_base * recovery.base_qty
@@ -1241,4 +1330,5 @@ async def run_slicing_loop(
         vwap_long_base=cumulative_vwap_long_base,
         vwap_short_base=cumulative_vwap_short_base,
         realized_basis_bps=cumulative_basis_bps,
+        order_records=order_records,
     )

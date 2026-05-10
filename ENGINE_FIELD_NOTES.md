@@ -2095,6 +2095,270 @@ trusting a venue's resolution behavior.
 
 ---
 
+## Anchor: Per-venue fee shape — empirical map (2026-05-10)
+
+**Context**: True PnL primitive Phase 1 captures a `fees` field on
+`FillReceipt` via `_fees_from_receipt`. We extract from the
+authoritative CCXT receipt. Two issues surfaced on the very first
+live trade (binance × bybit XRP, 07:46:11 UTC), motivating a broad
+fee-shape probe across all 12 venues via `probe_fee_shape.py`.
+
+### Issue 1: bybit double-counts `fee` and `fees`
+
+Bybit's CCXT `parseTrade` populates BOTH the singular `fee` dict AND
+`fees[0]` with IDENTICAL data:
+
+```python
+fee  = {'cost': 0.00741898, 'currency': 'USDT', 'rate': 0.00055}
+fees = [{'cost': 0.00741898, 'currency': 'USDT', 'rate': 0.00055}]
+```
+
+Naïve `fee + fees` concatenation 2×s the fee. Confirmed via the broad
+probe: this pattern is UNIVERSAL across 11/12 venues, not bybit-specific.
+Fix: full-tuple dedup key in `_fees_from_receipt`. Genuinely-different
+multi-currency entries (BNB partial-pay) survive; identical duplicates
+collapse.
+
+### Issue 2: binance fetch_order has NO fee data
+
+Binance is sync-zero (placement is authoritative for `filled`). But
+binance's `parseOrder` does NOT extract fees from EITHER placement
+OR fetch_order — the futures order endpoint simply doesn't expose
+them. Fees ONLY surface via fetch_my_trades.
+
+Probe (binance fetch_order on a known-filled order_id):
+```
+fee:   None
+fees:  []
+info keys: ['avgPrice', 'cumQuote', 'executedQty', ...] — no commission/fee key
+```
+
+vs same order via fetch_my_trades:
+```
+fee={'currency': 'USDT', 'cost': 0.00674547}
+```
+
+This is a CCXT-level quirk; calling fetch_order more aggressively
+won't help.
+
+### Per-venue API quirks — Table I (probe_fee_shape.py + probe_venue_quirks.py, 2026-05-10)
+
+| Venue           | fetch_order fee | fetch_my_trades limit | `since` param | order_id field | Notes |
+|-----------------|------------------|-----------------------|----------------|----------------|-------|
+| binance         | EMPTY (None)     | ≥500 OK               | honored        | `t['order']`   | sync-zero; no fees on placement OR fetch_order |
+| bybit           | populated USDT   | ≥500 OK               | honored        | `t['order']`   | sync-null; needs dedup — `fee == fees[0]` |
+| kucoinfutures   | EMPTY (None)     | ≥500 OK               | UNRELIABLE     | `t['order']`   | sync-null; `since` returns 0 trades at 1h or 7d depth, works at 24h — pnl.py omits since universally |
+| okx             | populated USDT   | **CAP = 100**         | honored        | `t['order']`   | sync-null; limit>100 → `BadRequest 51000 "Parameter limit error"` |
+| mexc            | populated USDT   | ≥500 OK               | honored        | `t['order']`   | sync-null |
+| bitget          | populated USDT   | ≥500 OK               | honored        | `t['order']`   | sync-null |
+| bingx           | populated USDT   | ≥500 OK               | honored        | `t['order']`   | sync-zero; `filled` on placement w/ NO fees, but fetch_order has fees — engine doesn't call fetch_order on sync-zero path so receipt-captured remains empty |
+| xt              | EMPTY ({None,None}) | **CAP = 100**       | honored        | `t['order']`   | sync-null; CCXT returns dict shape with None values; limit>100 → `max_100` error |
+| gate            | EMPTY (None)     | ≥500 OK               | honored        | `t['order']`   | sync-null |
+| htx             | populated USDT, **NEGATIVE sign + STRING/FLOAT type mismatch** (verified live 2026-05-10) | ≥500 OK | honored | `t['order']` | sync-null; fetch_order returns wrong sign + dedup-defeating type duality. fetch_my_trades is canonical (positive sign, single type). pnl.py always-enrich pattern handles this. |
+| bitmart         | EMPTY on fresh fill (verified live 2026-05-10) | ≥500 OK | honored | `t['order']` | sync-null; **fees on fetch_my_trades charged in RECEIVED currency** — USDT on sells, base coin (XRP) on buys. pnl.py converts base→USDT via vwap_base. |
+| coinex          | populated USDT   | ≥500 OK               | honored        | `t['order']`   | sync-null |
+
+**Summary** (verified empirically 2026-05-10):
+- **Receipt-level fee availability**: 6 populated (bybit, okx, mexc, bitget, coinex, **and bingx via fetch_order which engine doesn't call**), 4 empty (binance, kucoinfutures, xt, gate). htx fetch_order populates with WRONG SIGN + TYPE-MIXED dups (see Anchor below); bitmart untested-on-fresh-fetch_order. pnl.py's fetch_my_trades enrichment makes receipt fees moot — always enriches now.
+- **fetch_my_trades `limit` cap**: okx and xt both cap at 100. Our FETCH_MY_TRADES_LIMIT=100 satisfies both.
+- **fetch_my_trades `since`**: 11/12 honor it; KuCoin is unreliable. pnl.py omits since universally + client-filters by opened_at — works for all.
+- **fetch_my_trades fee shape**: 12/12 uniform — single-USDT dict per trade with `fee == fees[0]` duplication that must be deduped.
+- **fetch_my_trades fee currency**: 11/12 always USDT. **bitmart charges in the *received* currency** — USDT on sells, base coin (XRP) on buys. pnl.py converts base-coin fees to USDT via the order_record's vwap_base (correct for USDT-linear perps).
+
+### Anchor: htx fetch_order — three bugs in one payload (2026-05-10 08:58 smoketest)
+
+htx×bitmart smoketest (150 XRP entry+exit) revealed three independent
+issues that corrupt receipt-level fee data on htx specifically:
+
+```python
+# What htx actually returned:
+fee  = {'cost': '-0.128117700000000000', 'currency': 'USDT'}  # STRING, NEGATIVE
+fees = [{'cost': -0.1281177, 'currency': 'USDT'}]              # FLOAT, NEGATIVE
+```
+
+**Bug 1: NEGATIVE sign convention.** htx's parseOrder returns fee as
+"flow to user" (negative = paid by user). Compare to `fetch_my_trades`
+which returns `+0.1281177` for the same fill — "cost to user" convention.
+Other 11 venues all use cost-to-user. htx is the lone anomaly on
+fetch_order; htx's fetch_my_trades is consistent with the rest.
+
+**Bug 2: TYPE MISMATCH between `fee` and `fees[0]`.** Same numerical
+value emitted as string in `fee` and float in `fees[0]`. Our previous
+dedup-by-tuple-key treated `'-0.128'` and `-0.128` as different →
+counted twice → 2× the fee.
+
+**Bug 3: Receipt vs trade ledger drift.** fee value is the same
+magnitude on both endpoints (0.128117), but with opposite sign.
+fetch_my_trades is authoritative; fetch_order disagrees with the same
+venue's own ledger.
+
+**Net effect (pre-fix)**: pnl.py reported phantom **+$0.37 profit** on
+a trade that actually lost $0.58. Three bugs compounded.
+
+**Fixes (2026-05-10)**:
+1. `_dedupe_fees` now coerces `cost` to `float` before building the
+   dedup key — collapses string vs float duplicates.
+2. pnl.py's `enrich_trade_fees` ALWAYS enriches via fetch_my_trades
+   (not "only when captured fees empty"). fetch_my_trades is canonical;
+   captured fees are fallback only when enrichment fails to match.
+3. `compute_pnl` converts base-coin fees to USDT via the order_record's
+   `vwap_base` (handles bitmart-style "fee in received currency").
+
+**Lesson**: same meta-pattern as XT/filled, KuCoin/since, and the
+original bybit/dedup. **CCXT unification documents intent, not behavior.**
+Each venue may have idiosyncratic conventions — sign, type, currency,
+endpoint-disagreement — that only surface on real fills. The robust
+architecture is: trust the venue's authoritative ledger (fetch_my_trades
+in this case), verify shapes empirically per venue, and treat unification
+schemas as a starting hypothesis to falsify.
+
+### Anchor: Phase 2 systematic rigorization status (2026-05-10)
+
+Five live smoketests across distinct venue pairs, all hand-math verified:
+
+| Pair             | qty   | fees observed                            | true_pnl  | math ✓ | rate verify |
+|------------------|-------|------------------------------------------|-----------|--------|-------------|
+| binance × bybit  | 19    | binance 0.05%, bybit 0.055%              | -0.0605   | ✓      | exact match |
+| bingx × xt       | 10    | bingx 0.05%, xt 0.06%                    | -0.0353   | ✓      | exact match |
+| htx × bitmart    | 150   | htx 0.06%, bitmart 0.06%/0.0855% asymm  | -0.5835   | ✓      | (see asymm note) |
+| gate × coinex    | 10    | gate 0.05%, coinex 0.05%                 | -0.0315   | ✓      | exact match |
+| kucoin × okx     | 10    | kucoin 0.06% (rate=0.0006), okx 0.05%    | -0.0415   | ✓      | exact match |
+
+**6 venues ✓ exact taker rate match**, **1 anomaly (bitmart asymm)**.
+
+**Update (2026-05-10 follow-up)** — closed out the three remaining "genuinely-untested" Phase-2 gaps:
+
+| Pair                    | qty   | cycles | fees observed                            | true_pnl  | math ✓ | rate verify |
+|-------------------------|-------|--------|------------------------------------------|-----------|--------|-------------|
+| mexc × bitget           | 18    | 3      | mexc 0.06%, bitget 0.06%                 | -0.0652   | ✓      | exact match |
+| binance × bybit (multi) | 147   | 6      | binance 0.05%, bybit 0.055%              | -0.4760   | ✓      | exact match |
+
+Multi-cycle behavior (2nd row): 147-XRP target naturally produced 6 cycles per side via the DEPTH_DISCOUNT × safe_ceiling halving pattern (73.5 → 36.8 → 18.4 → 9.2 → 4.6 → 4.6). 24 total order_records (12 entry + 12 exit) summed correctly. Per-venue effective rates from the aggregated record set landed at published taker rates to 4 decimals: binance 0.0500%, bybit 0.0550%.
+
+Recovery (3rd untested case): code path verified via mock-CCXT synthetic test. Asymmetric fill (long=10, short=8) → `recover_imbalance` correctly identifies the lagging leg, dispatches market sell on short for delta=2, builds order_record with kind='recovery', fees deduped via `_fees_from_receipt`. All expected fields populated. Recovery rarely fires on deep books (smoketests + multi-cycle test all had `recovered=False` on every cycle), so empirical verification on a real recovery awaits production conditions where book thinness or precision asymmetry produces residual after symmetric snap.
+
+#### Bitmart asymmetric effective fee rate (open question)
+
+bitmart charges fee in the *received* currency: USDT on sells, base coin on buys:
+- Sell side: 0.128 USDT on $213.65 notional = 0.06% (matches published)
+- Buy side: 0.128196 XRP × $1.4244 vwap = $0.18264 effective on $213.66 = 0.0855%
+
+The fee SCALAR is the same (~0.128) on both sides regardless of currency, suggesting bitmart computes fee as if 1 USDT = 1 XRP, then deducts in the received currency. Our vwap-based conversion gives the actually-incurred USDT-equivalent ($0.18264), which is correct from a "what did this trade cost us" perspective. Worth flagging to operator: bitmart's effective fee on buys is ~1.4× higher than on sells when measured in USDT.
+
+#### Other systematic checks completed
+
+- **JSON integrity**: 19 trades, 0 schema issues, parses cleanly.
+- **Idempotency**: `pnl.py` run twice produces identical output (md5 matches). Mutates closed_trades.json once; subsequent runs are no-op for already-enriched fees.
+- **Race safety**: simulated engine append during pnl.py compute → both injected record AND fee mutation preserved (confirmed end-to-end).
+- **Engine boot path**: patched `_dedupe_fees` correctly handles htx-style mixed-string-float duplication (1 entry, not 2).
+- **Edge cases**: multi-fill order matching ✓, fee currency=None ✓, recovery records ✓, integer/string/scientific cost formats ✓.
+- **Trade ID uniqueness check**: 11/12 venues return unique `t['id']` in fetch_my_trades (no idempotency duplicates). bingx is the lone exception — it returns `id=None` on every trade, so dedup-by-trade-id strategies would break for bingx specifically. We use `t['order']` for matching (works on bingx), so this is informational only.
+
+### Anchor: Phase 3 funding integration — ready for first real trade (2026-05-10)
+
+**Built**: pnl.py `enrich_trade_funding(trade)` joins per-leg
+`fetch_funding_history(symbol, limit=100)` over `[opened_at, closed_at]`.
+`compute_pnl` adds `funding_pnl_usdt = signed_long + signed_short`,
+producing `true_pnl = price + funding − fees`. Persisted in
+closed_trades.json under `funding_history.{long|short}.{events,total_usdt,non_usdt_events}`.
+
+**12/12 venues** support `ex.has['fetchFundingHistory'] = True` (verified
+via `probe_funding_shape.py`).
+
+**Bitget caps** `fetch_funding_history(limit)` below 500 (verified — `BadRequest`
+at 500). Our default `FETCH_FUNDING_HISTORY_LIMIT = 100` works universally.
+
+**Empirical gap**: NO sample funding events available — every smoketest
+held a position for <60 seconds, none spanned a settlement (8h cadence
+on most venues). Sign convention is from CCXT documentation, NOT
+verified per venue. **First real long-hold trade should be inspected
+in verbose mode** to validate sign and catch any per-venue quirks
+analogous to:
+  - htx fetch_order: NEGATIVE sign convention vs cost-to-user
+  - xt fetch_order: dict shape with `cost: None` values
+  - bitmart fetch_my_trades: fee currency = base coin on buys
+
+The same defensive pattern from Phase 2 applies: trust nothing per-venue
+until empirically verified. Build-to-spec now, fix-on-evidence later.
+
+**Math validated synthetically**: a 1000-XRP / 24h trade with 3 funding
+settlements (long pays -0.21 USDT total, short receives +0.51 USDT total,
+net funding +0.30) produces correct `funding_pnl` integration with
+`price_pnl` and `fees_pnl`. Hand-math match to 4 decimals.
+
+**Useful side insight from synthetic**: at our typical 0.05-0.06% taker
+rates, a single delta-neutral round trip pays ≈4 fees (entry IOC × 2
+legs + exit IOC × 2 legs). For a 1000 XRP × $1.42 = $1420 notional,
+that's ~$3 in fees. **A round-trip basis profit needs to exceed ~21 bps
+just to break even on fees alone**, before funding contributes anything.
+Phase 3 funding contribution per 8h cycle on this size is typically
+$0.10-$1.00 (1-7 bps of notional per cycle), so multi-cycle holds are
+needed for funding to dominate.
+
+**Uniformity**: 12/12 venues respond identically — single USDT fee
+per trade, dedup-required, `t['order']` for matching. KuCoin has the
+one venue-quirk: its `since` parameter is broken (returns empty even
+when trades exist in the requested window — verified 2026-05-10 with
+trades from 2026-05-09T23:34 NOT returned given since=7-days-ago,
+but fully returned when `since` was omitted entirely).
+
+Phase 2's pnl.py uses the venue-agnostic safe pattern: omit `since`,
+fetch latest N trades, filter client-side by opened_at:
+
+```python
+# Enrichment per (venue, symbol) — single batched call, fees populated
+# for every order_id whose trade is in the venue's recent history.
+trades = await ex.fetch_my_trades(symbol, limit=200)   # NO `since` — KuCoin-safe
+trades_in_window = [t for t in trades if t["timestamp"] >= opened_at_ms]
+trade_by_order = {str(t["order"]): t for t in trades_in_window}
+for record in entry_order_records + exit_order_records:
+    record["fees"] = _dedupe_fees(record["fees"])  # idempotent; cleans legacy double-counts
+    if not record["fees"]:                          # still empty → enrich
+        match = trade_by_order.get(record["order_id"])
+        if match:
+            record["fees"] = _fees_from_receipt(match)
+```
+
+### Receipt-level fee availability — what governs engine-captured fees
+
+The engine's `_fees_from_receipt` extracts from whatever the resolver
+deems authoritative — placement for sync-zero, fetch_order for sync-null.
+The empirical reality (Table I above) is more nuanced than the sync-mode
+implies:
+
+- **sync-zero venues** (binance, bingx): placement is trusted for `filled`,
+  fetch_order never called by resolver. Even when fetch_order WOULD
+  populate fees (bingx case), the engine never sees them. Receipt-captured
+  fees are empty for these venues.
+- **sync-null venues**: split per-venue. Bybit, okx, mexc, bitget,
+  coinex populate fees on fetch_order → engine captures them. Kucoinfutures,
+  xt, gate return empty/None → engine captures empty.
+- **htx, bitmart**: their fetch_order endpoint pruned the old order_ids
+  we used for the probe (returned OrderNotFound), so we don't yet know
+  the FRESH-order behavior. Will surface on the next live trade.
+
+This is exactly why pnl.py's `fetch_my_trades` enrichment is the correct
+universal fallback — it doesn't care about per-venue receipt quirks.
+Every closed trade ends up with correct fee data, regardless of which
+venues exposed what at receipt-resolution time.
+
+### Lesson
+
+Same meta-lesson as XT/filled: **CCXT's unification only documents
+intent, not behavior**. The receipt's `fee`/`fees` fields are a
+contract that 11/12 venues honor with unintended duplication, and
+binance honors with EMPTY-on-fetch_order. Always probe shape on
+real fills before trusting any "should be populated" assumption.
+
+The probe (`probe_fee_shape.py`) costs $0 — fetch_my_trades is
+read-only — and gave us coverage of 11/12 venues in one batch.
+Lean and high-leverage. KuCoin's gap will be filled when a real
+KuCoin trade closes (the captured fees on the FillReceipt's
+fetch_order path will be the data point — and pnl.py's
+fetch_my_trades enrichment handles it regardless).
+
+---
+
 *End of file. This document gets updated whenever a probe runs and
 returns a value that contradicts a row above. Always commit the new
 finding alongside the probe-log JSONL that proves it.*

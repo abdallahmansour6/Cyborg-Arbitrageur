@@ -94,6 +94,88 @@ _TERMINAL_STATUSES = ("closed", "canceled", "expired", "rejected", "filled")
 # ---------------------------------------------------------------------------
 
 
+def _dedupe_fees(fees: list) -> list:
+    """Dedupe a list of fee dicts by full content (cost + currency + rate).
+
+    Reusable across receipt extraction AND analyzer-side redupe of legacy
+    captured fees from older engine versions (pre-2026-05-10 dedup fix).
+    Filters entries whose `cost` is None (venues sometimes emit empty
+    fee placeholders pre-fill — they carry no PnL information).
+
+    **Type normalization**: `cost` and `rate` are coerced to `float` before
+    building the dedup key. Anchor (2026-05-10 htx×bitmart smoketest):
+    htx populated `fee.cost` as `'-0.128117700000000000'` (string) and
+    `fees[0].cost` as `-0.1281177` (float). Same value, different types,
+    different dedup keys → htx fees got DOUBLE-counted in the negative
+    direction, producing a phantom profit. Float coercion catches this.
+
+    Genuinely-different multi-currency entries (e.g. BNB partial-pay)
+    survive; exact duplicates collapse to one entry."""
+    out = []
+    seen = set()
+    for f in fees:
+        if not isinstance(f, dict) or f.get("cost") is None:
+            continue
+        normalized: dict = {}
+        try:
+            normalized["cost"] = float(f["cost"])
+        except (TypeError, ValueError):
+            continue  # non-numeric cost — skip rather than crash
+        if "currency" in f:
+            normalized["currency"] = f["currency"]
+        if "rate" in f and f.get("rate") is not None:
+            try:
+                normalized["rate"] = float(f["rate"])
+            except (TypeError, ValueError):
+                pass  # rate is informational; skip-on-bad-type rather than fail
+        key = tuple(sorted(normalized.items()))
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(normalized)
+    return out
+
+
+def _fees_from_receipt(receipt: dict) -> list:
+    """Normalize a CCXT receipt's fee surface to a deduped list of
+    {cost, currency, rate?} dicts.
+
+    CCXT exposes fees in two shapes, often both populated per-venue:
+      - `fee`:  single dict {cost, currency, rate?}
+      - `fees`: list of dicts — multi-currency fees, partial BNB-pay, etc.
+
+    Empirically (probe_fee_shape.py, 2026-05-10): 11/12 verified venues
+    duplicate the same fee into BOTH `fee` AND `fees[0]`. Naïve
+    concatenation double-counts. We collect both into one list and
+    dedupe via `_dedupe_fees` (full-tuple key).
+
+    Empty list = venue did not surface fee data on this receipt.
+    Verified empty venues (2026-05-10):
+      - binance (sync-zero): empty on placement AND fetch_order
+      - bingx   (sync-zero): empty on placement (fees only via fetch_my_trades)
+      - xt      (sync-null): empty on fetch_order (despite being sync-null!)
+    Verified populated:
+      - bybit   (sync-null): single USDT entry on fetch_order (post-dedup)
+    Other 8 venues: assumed empty until proven otherwise; pnl.py's
+    fetch_my_trades enrichment handles all of them uniformly. Phase 2
+    (pnl.py) bridges every gap: when an order_record has empty fees, it
+    calls fetch_my_trades and matches by order_id; for captured fees
+    that may be from older engine versions, pnl.py reduplicates via
+    `_dedupe_fees` for safety (idempotent on already-deduped data).
+
+    Foundation for True PnL primitive (Phase 1, 2026-05-10) — captures
+    whatever fee data is free at receipt-resolution time; venue-specific
+    gaps are filled by pnl.py's fetch_my_trades pass."""
+    candidates = []
+    fee = receipt.get("fee")
+    if fee is not None:
+        candidates.append(fee)
+    receipt_fees = receipt.get("fees") or []
+    if isinstance(receipt_fees, list):
+        candidates.extend(receipt_fees)
+    return _dedupe_fees(candidates)
+
+
 def _vwap_from_receipt(receipt: dict) -> float:
     """Three-tier VWAP extraction in venue-native price units.
 
@@ -376,6 +458,7 @@ async def resolve_receipt(
         _vwap_from_receipt(authoritative) if filled_native > 0 else 0.0
     )
     vwap_base = leg.to_base_price(vwap_native) if vwap_native > 0 else 0.0
+    fees = _fees_from_receipt(authoritative)
     status = authoritative.get("status")
 
     return FillReceipt(
@@ -385,6 +468,7 @@ async def resolve_receipt(
         filled_base=filled_base,
         vwap_native=vwap_native,
         vwap_base=vwap_base,
+        fees=fees,
         status=status,
         r_mode=rm_label,
         resolution_path=resolution_path,

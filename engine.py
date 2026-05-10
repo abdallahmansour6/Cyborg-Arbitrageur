@@ -519,6 +519,11 @@ class ArbitrageEngine:
                 )
                 pos["entry_qty_base"] = new_entry_qty
                 pos["amount_base"] = new_entry_qty - pos.get("exit_qty_base", 0.0)
+                # Phase-1 PnL primitive: append every IOC + recovery from this
+                # entry call's slicing loop. setdefault handles legacy positions
+                # opened before the schema enrichment landed (defensive only —
+                # operator confirmed positions.json was empty at deploy time).
+                pos.setdefault("entry_order_records", []).extend(result.order_records)
                 log(
                     f"Scaled in. entry_qty_base={new_entry_qty} amount_base={pos['amount_base']} "
                     f"entry_basis_bps={pos['entry_basis_bps']:.2f} (halt_reason={result.halt_reason})",
@@ -538,6 +543,9 @@ class ArbitrageEngine:
                     "exit_vwap_short_base": None,
                     "exit_basis_bps": None,
                     "opened_at": now_str(),
+                    # Phase-1 PnL primitive: per-order capture for closed_trades fold-in.
+                    "entry_order_records": list(result.order_records),
+                    "exit_order_records": [],
                 }
                 log(
                     f"Delta-neutral established for {pos_key} amount_base={result.filled_base} "
@@ -675,6 +683,8 @@ class ArbitrageEngine:
             )
             pos["exit_qty_base"] = new_exit_qty
             pos["amount_base"] -= result.filled_base
+            # Phase-1 PnL primitive: capture exit-side IOC + recovery records.
+            pos.setdefault("exit_order_records", []).extend(result.order_records)
 
         # Dust check: residual below either leg's min lot size means we cannot
         # legally trade it again — archive the closed trade and clear the ledger.
@@ -698,6 +708,12 @@ class ArbitrageEngine:
                 "round_trip_basis_bps": entry_basis + exit_basis,
                 "opened_at": pos.get("opened_at"),
                 "closed_at": now_str(),
+                # Phase-1 PnL primitive: full per-order trail folded in on
+                # archival. Self-sufficient — pnl.py reads ONLY this record
+                # (no positions.json cross-reference) to compute price PnL +
+                # fee PnL. Funding PnL (Phase 3) joins via opened_at/closed_at.
+                "entry_order_records": pos.get("entry_order_records", []),
+                "exit_order_records": pos.get("exit_order_records", []),
             }
             await asyncio.to_thread(append_closed_trade, closed_record)
             del self.positions[pos_key]

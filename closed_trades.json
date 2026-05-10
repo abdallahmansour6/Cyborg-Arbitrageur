@@ -24,7 +24,19 @@
         "exit_basis_bps": -0.11128855452968914,
         "round_trip_basis_bps": -0.02473078989668609,
         "opened_at": "2026-05-09 19:02:26.240",
-        "closed_at": "2026-05-09 19:02:32.833"
+        "closed_at": "2026-05-09 19:02:32.833",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -51,7 +63,19 @@
         "exit_basis_bps": 3.306983011254088,
         "round_trip_basis_bps": -6.125186317302994,
         "opened_at": "2026-05-09 22:13:52.469",
-        "closed_at": "2026-05-09 22:13:59.370"
+        "closed_at": "2026-05-09 22:13:59.370",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -78,7 +102,19 @@
         "exit_basis_bps": 0.0,
         "round_trip_basis_bps": -7.110147447563912,
         "opened_at": "2026-05-09 23:21:25.297",
-        "closed_at": "2026-05-09 23:21:32.633"
+        "closed_at": "2026-05-09 23:21:32.633",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -105,7 +141,19 @@
         "exit_basis_bps": -0.6338229028379313,
         "round_trip_basis_bps": -7.115160876433748,
         "opened_at": "2026-05-09 23:34:00.154",
-        "closed_at": "2026-05-09 23:34:07.047"
+        "closed_at": "2026-05-09 23:34:07.047",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -132,7 +180,19 @@
         "exit_basis_bps": -6.69379414821474,
         "round_trip_basis_bps": -0.3519698167494205,
         "opened_at": "2026-05-09 23:49:21.560",
-        "closed_at": "2026-05-09 23:49:28.275"
+        "closed_at": "2026-05-09 23:49:28.275",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -159,7 +219,19 @@
         "exit_basis_bps": 3.309311487183251,
         "round_trip_basis_bps": -7.396723335603458,
         "opened_at": "2026-05-10 00:31:48.645",
-        "closed_at": "2026-05-10 00:31:55.782"
+        "closed_at": "2026-05-10 00:31:55.782",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -186,7 +258,19 @@
         "exit_basis_bps": 0.0,
         "round_trip_basis_bps": -1.7425252156377151,
         "opened_at": "2026-05-10 00:32:28.209",
-        "closed_at": "2026-05-10 00:32:38.721"
+        "closed_at": "2026-05-10 00:32:38.721",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -213,7 +297,19 @@
         "exit_basis_bps": -5.565320305316616,
         "round_trip_basis_bps": -0.3519600128050948,
         "opened_at": "2026-05-10 00:33:31.680",
-        "closed_at": "2026-05-10 00:33:38.513"
+        "closed_at": "2026-05-10 00:33:38.513",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -240,7 +336,19 @@
         "exit_basis_bps": -1.4078558355622834,
         "round_trip_basis_bps": -1.9377520815060458,
         "opened_at": "2026-05-10 02:27:13.473",
-        "closed_at": "2026-05-10 02:27:23.251"
+        "closed_at": "2026-05-10 02:27:23.251",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -267,7 +375,19 @@
         "exit_basis_bps": -5.633802816902352,
         "round_trip_basis_bps": -2.113543725832074,
         "opened_at": "2026-05-10 02:30:34.086",
-        "closed_at": "2026-05-10 02:30:40.710"
+        "closed_at": "2026-05-10 02:30:40.710",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -294,7 +414,19 @@
         "exit_basis_bps": -5.643340857787189,
         "round_trip_basis_bps": -1.410536624983422,
         "opened_at": "2026-05-10 02:32:52.424",
-        "closed_at": "2026-05-10 02:32:59.456"
+        "closed_at": "2026-05-10 02:32:59.456",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -321,7 +453,19 @@
         "exit_basis_bps": 7.060152499294776,
         "round_trip_basis_bps": -5.645430898743084,
         "opened_at": "2026-05-10 04:37:42.419",
-        "closed_at": "2026-05-10 04:37:50.454"
+        "closed_at": "2026-05-10 04:37:50.454",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -348,7 +492,19 @@
         "exit_basis_bps": 8.479366873939146,
         "round_trip_basis_bps": -2.1187184053192336,
         "opened_at": "2026-05-10 04:46:08.759",
-        "closed_at": "2026-05-10 04:46:17.597"
+        "closed_at": "2026-05-10 04:46:17.597",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     },
     {
         "base_coin": "XRP",
@@ -375,6 +531,1590 @@
         "exit_basis_bps": 7.06164818868803,
         "round_trip_basis_bps": -4.235393398546635,
         "opened_at": "2026-05-10 05:21:19.820",
-        "closed_at": "2026-05-10 05:21:26.984"
+        "closed_at": "2026-05-10 05:21:26.984",
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "binance",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "bybit",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 19.0,
+        "exit_qty_base": 19.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4200999999999997,
+        "entry_vwap_short_base": 1.4199,
+        "entry_basis_bps": -1.4084507042236334,
+        "exit_vwap_long_base": 1.42,
+        "exit_vwap_short_base": 1.42,
+        "exit_basis_bps": 0.0,
+        "round_trip_basis_bps": -1.4084507042236334,
+        "opened_at": "2026-05-10 07:46:11.187",
+        "closed_at": "2026-05-10 07:46:20.976",
+        "entry_order_records": [
+            {
+                "order_id": "148657874594",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.5,
+                "filled_base": 9.5,
+                "vwap_native": 1.4201,
+                "vwap_base": 1.4201,
+                "fees": [
+                    {
+                        "cost": 0.00674547,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 07:46:06.495"
+            },
+            {
+                "order_id": "92c188f1-38d7-4526-8196-d3257eefe3a3",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.5,
+                "filled_base": 9.5,
+                "vwap_native": 1.4199,
+                "vwap_base": 1.4199,
+                "fees": [
+                    {
+                        "cost": 0.00741898,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 07:46:06.495"
+            },
+            {
+                "order_id": "148657875294",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.7,
+                "filled_base": 4.7,
+                "vwap_native": 1.4201,
+                "vwap_base": 1.4201,
+                "fees": [
+                    {
+                        "cost": 0.00333723,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 07:46:08.092"
+            },
+            {
+                "order_id": "8aa39a6a-5f50-483c-9663-3f99693246b3",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.7,
+                "filled_base": 4.7,
+                "vwap_native": 1.4199,
+                "vwap_base": 1.4199,
+                "fees": [
+                    {
+                        "cost": 0.00367045,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 07:46:08.092"
+            },
+            {
+                "order_id": "148657875783",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.8,
+                "filled_base": 4.8,
+                "vwap_native": 1.4201,
+                "vwap_base": 1.4201,
+                "fees": [
+                    {
+                        "cost": 0.00340824,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 07:46:09.685"
+            },
+            {
+                "order_id": "7d856af5-33a1-4078-b034-569658ea0ff3",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.8,
+                "filled_base": 4.8,
+                "vwap_native": 1.4199,
+                "vwap_base": 1.4199,
+                "fees": [
+                    {
+                        "cost": 0.00374854,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 07:46:09.685"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "148657882388",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.5,
+                "filled_base": 9.5,
+                "vwap_native": 1.42,
+                "vwap_base": 1.42,
+                "fees": [
+                    {
+                        "cost": 0.006745,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 07:46:16.280"
+            },
+            {
+                "order_id": "a4b19de9-bacd-48a3-b768-c62216548cfc",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.5,
+                "filled_base": 9.5,
+                "vwap_native": 1.42,
+                "vwap_base": 1.42,
+                "fees": [
+                    {
+                        "cost": 0.0074195,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 07:46:16.280"
+            },
+            {
+                "order_id": "148657882777",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.7,
+                "filled_base": 4.7,
+                "vwap_native": 1.42,
+                "vwap_base": 1.42,
+                "fees": [
+                    {
+                        "cost": 0.003337,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 07:46:17.881"
+            },
+            {
+                "order_id": "b4672222-2a72-4a4f-99a0-8a8993b3e09c",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.7,
+                "filled_base": 4.7,
+                "vwap_native": 1.42,
+                "vwap_base": 1.42,
+                "fees": [
+                    {
+                        "cost": 0.0036707,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 07:46:17.881"
+            },
+            {
+                "order_id": "148657883219",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.8,
+                "filled_base": 4.8,
+                "vwap_native": 1.42,
+                "vwap_base": 1.42,
+                "fees": [
+                    {
+                        "cost": 0.003408,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 07:46:19.474"
+            },
+            {
+                "order_id": "f5242f5c-a06e-40e5-9973-853c16bcbda6",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.8,
+                "filled_base": 4.8,
+                "vwap_native": 1.42,
+                "vwap_base": 1.42,
+                "fees": [
+                    {
+                        "cost": 0.0037488,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 07:46:19.474"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "bingx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "xt",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4238,
+        "entry_vwap_short_base": 1.4224,
+        "entry_basis_bps": -9.837678307918246,
+        "exit_vwap_long_base": 1.4236,
+        "exit_vwap_short_base": 1.4226,
+        "exit_basis_bps": 7.026913077084463,
+        "round_trip_basis_bps": -2.810765230833783,
+        "opened_at": "2026-05-10 08:41:53.753",
+        "closed_at": "2026-05-10 08:42:00.653",
+        "entry_order_records": [
+            {
+                "order_id": "2053395080409198593",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bingx",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 10.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4238,
+                "vwap_base": 1.4238,
+                "fees": [
+                    {
+                        "cost": 0.007119,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:41:52.251"
+            },
+            {
+                "order_id": "623695151929720896",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "xt",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4224,
+                "vwap_base": 1.4224,
+                "fees": [
+                    {
+                        "cost": 0.0085344,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:41:52.251"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "2053395108875939841",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bingx",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 10.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4236,
+                "vwap_base": 1.4236,
+                "fees": [
+                    {
+                        "cost": 0.007118,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:41:59.152"
+            },
+            {
+                "order_id": "623695180513685824",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "xt",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4226,
+                "vwap_base": 1.4226,
+                "fees": [
+                    {
+                        "cost": 0.0085356,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:41:59.152"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "htx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "bitmart",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 0.1
+        },
+        "entry_qty_base": 150.0,
+        "exit_qty_base": 150.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.42353,
+        "entry_vwap_short_base": 1.4243,
+        "entry_basis_bps": 5.407626157459802,
+        "exit_vwap_long_base": 1.42352,
+        "exit_vwap_short_base": 1.4244,
+        "exit_basis_bps": -6.1799488749699005,
+        "round_trip_basis_bps": -0.7723227175100984,
+        "opened_at": "2026-05-10 08:58:09.891",
+        "closed_at": "2026-05-10 08:58:16.623",
+        "entry_order_records": [
+            {
+                "order_id": "1503078701065592832",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "htx",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 15.0,
+                "filled_base": 150.0,
+                "vwap_native": 1.42353,
+                "vwap_base": 1.42353,
+                "fees": [
+                    {
+                        "cost": 0.1281177,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:58:08.389"
+            },
+            {
+                "order_id": "3000350946006381",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bitmart",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1500.0,
+                "filled_base": 150.0,
+                "vwap_native": 1.4243,
+                "vwap_base": 1.4243,
+                "fees": [
+                    {
+                        "cost": 0.128187,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:58:08.389"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "1503078729280942080",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "htx",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 15.0,
+                "filled_base": 150.0,
+                "vwap_native": 1.42352,
+                "vwap_base": 1.42352,
+                "fees": [
+                    {
+                        "cost": 0.1281168,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 08:58:15.121"
+            },
+            {
+                "order_id": "3000350946006438",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bitmart",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1500.0,
+                "filled_base": 150.0,
+                "vwap_native": 1.4244,
+                "vwap_base": 1.4244,
+                "fees": [
+                    {
+                        "cost": 0.128196,
+                        "currency": "XRP"
+                    }
+                ],
+                "ts": "2026-05-10 08:58:15.121"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "gate",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "coinex",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4269,
+        "entry_vwap_short_base": 1.428,
+        "entry_basis_bps": 7.706049248659351,
+        "exit_vwap_long_base": 1.4268,
+        "exit_vwap_short_base": 1.4282,
+        "exit_basis_bps": -9.807355516636399,
+        "round_trip_basis_bps": -2.101306267977048,
+        "opened_at": "2026-05-10 09:15:39.945",
+        "closed_at": "2026-05-10 09:15:49.386",
+        "entry_order_records": [
+            {
+                "order_id": "203224939442751135",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "gate",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.0071345,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:15:38.444"
+            },
+            {
+                "order_id": "207690015908",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "coinex",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 10.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.428,
+                "vwap_base": 1.428,
+                "fees": [
+                    {
+                        "cost": 0.00714,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:15:38.444"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "203224939442751312",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "gate",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4268,
+                "vwap_base": 1.4268,
+                "fees": [
+                    {
+                        "cost": 0.007134,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:15:47.885"
+            },
+            {
+                "order_id": "207690018329",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "coinex",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 10.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.4282,
+                "vwap_base": 1.4282,
+                "fees": [
+                    {
+                        "cost": 0.007141,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:15:47.885"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "kucoinfutures",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "okx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 100.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.42732,
+        "entry_vwap_short_base": 1.426,
+        "entry_basis_bps": -9.25237968401713,
+        "exit_vwap_long_base": 1.42731,
+        "exit_vwap_short_base": 1.427,
+        "exit_basis_bps": 2.1721536903842433,
+        "round_trip_basis_bps": -7.080225993632887,
+        "opened_at": "2026-05-10 09:16:03.678",
+        "closed_at": "2026-05-10 09:16:11.137",
+        "entry_order_records": [
+            {
+                "order_id": "442882261336076288",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "kucoinfutures",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.42732,
+                "vwap_base": 1.42732,
+                "fees": [
+                    {
+                        "cost": 0.00856392,
+                        "currency": "USDT",
+                        "rate": 0.0006
+                    }
+                ],
+                "ts": "2026-05-10 09:16:02.175"
+            },
+            {
+                "order_id": "3553486874821664768",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "okx",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 0.1,
+                "filled_base": 10.0,
+                "vwap_native": 1.426,
+                "vwap_base": 1.426,
+                "fees": [
+                    {
+                        "cost": 0.00713,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:16:02.175"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "442882291744710656",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "kucoinfutures",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 1.0,
+                "filled_base": 10.0,
+                "vwap_native": 1.42731,
+                "vwap_base": 1.42731,
+                "fees": [
+                    {
+                        "cost": 0.00856386,
+                        "currency": "USDT",
+                        "rate": 0.0006
+                    }
+                ],
+                "ts": "2026-05-10 09:16:09.635"
+            },
+            {
+                "order_id": "3553487117722198016",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "okx",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 0.1,
+                "filled_base": 10.0,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.007135,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:16:09.635"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "mexc",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "bitget",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 18.0,
+        "exit_qty_base": 18.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4272,
+        "entry_vwap_short_base": 1.4269,
+        "entry_basis_bps": -2.1022388844116673,
+        "exit_vwap_long_base": 1.4271,
+        "exit_vwap_short_base": 1.427,
+        "exit_basis_bps": 0.7007462948038891,
+        "round_trip_basis_bps": -1.4014925896077783,
+        "opened_at": "2026-05-10 09:52:06.888",
+        "closed_at": "2026-05-10 09:52:17.494",
+        "entry_order_records": [
+            {
+                "order_id": "808394724414200320",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "mexc",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.0,
+                "filled_base": 9.0,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.00770688,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:01.743"
+            },
+            {
+                "order_id": "1437307453275484161",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bitget",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.0,
+                "filled_base": 9.0,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00770526,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:01.743"
+            },
+            {
+                "order_id": "808394732110745088",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "mexc",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.0,
+                "filled_base": 4.0,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.00342528,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:03.560"
+            },
+            {
+                "order_id": "1437307460972032001",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bitget",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.0,
+                "filled_base": 4.0,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00342456,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:03.560"
+            },
+            {
+                "order_id": "808394739710825984",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "mexc",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 5.0,
+                "filled_base": 5.0,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.0042816,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:05.387"
+            },
+            {
+                "order_id": "1437307468584693761",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bitget",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 5.0,
+                "filled_base": 5.0,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.0042807,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:05.387"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "808394768357923328",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "mexc",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.0,
+                "filled_base": 9.0,
+                "vwap_native": 1.4271,
+                "vwap_base": 1.4271,
+                "fees": [
+                    {
+                        "cost": 0.00770634,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:12.242"
+            },
+            {
+                "order_id": "1437307497256955905",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bitget",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.0,
+                "filled_base": 9.0,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.0077058,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:12.242"
+            },
+            {
+                "order_id": "808394776092218880",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "mexc",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.0,
+                "filled_base": 4.0,
+                "vwap_native": 1.4271,
+                "vwap_base": 1.4271,
+                "fees": [
+                    {
+                        "cost": 0.00342504,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:14.138"
+            },
+            {
+                "order_id": "1437307504987058177",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bitget",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.0,
+                "filled_base": 4.0,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.0034248,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:14.138"
+            },
+            {
+                "order_id": "808394784204003328",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "mexc",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 5.0,
+                "filled_base": 5.0,
+                "vwap_native": 1.4271,
+                "vwap_base": 1.4271,
+                "fees": [
+                    {
+                        "cost": 0.0042813,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:15.993"
+            },
+            {
+                "order_id": "1437307512952041473",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bitget",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 5.0,
+                "filled_base": 5.0,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.004281,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:52:15.993"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "binance",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "bybit",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 147.09999999999997,
+        "exit_qty_base": 146.99999999999997,
+        "residual_dust_base": 0.09999999999999432,
+        "entry_vwap_long_base": 1.4272000000000005,
+        "entry_vwap_short_base": 1.4268093813732157,
+        "entry_basis_bps": -2.7373324652272344,
+        "exit_vwap_long_base": 1.4270000000000003,
+        "exit_vwap_short_base": 1.4268500000000002,
+        "exit_basis_bps": 1.0512115212789352,
+        "round_trip_basis_bps": -1.6861209439482991,
+        "opened_at": "2026-05-10 09:53:21.979",
+        "closed_at": "2026-05-10 09:53:36.563",
+        "entry_order_records": [
+            {
+                "order_id": "148665147560",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 73.5,
+                "filled_base": 73.5,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.0524496,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:12.492"
+            },
+            {
+                "order_id": "fdfb44cc-863e-42af-886e-872d4b85ea1b",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 73.5,
+                "filled_base": 73.5,
+                "vwap_native": 1.4268,
+                "vwap_base": 1.4268,
+                "fees": [
+                    {
+                        "cost": 0.03931548,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.00282507,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.00282507,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.01271279,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:12.492"
+            },
+            {
+                "order_id": "148665148156",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 36.8,
+                "filled_base": 36.8,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.02626048,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:14.089"
+            },
+            {
+                "order_id": "e7736809-ecda-4633-af00-8c87f33b61a0",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 36.8,
+                "filled_base": 36.8,
+                "vwap_native": 1.4268,
+                "vwap_base": 1.4268,
+                "fees": [
+                    {
+                        "cost": 0.02581795,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.00306049,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:14.089"
+            },
+            {
+                "order_id": "148665148697",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 18.4,
+                "filled_base": 18.4,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.01313024,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:15.690"
+            },
+            {
+                "order_id": "e7f3e07d-9d00-44ad-ae5c-fb72b3dad5b9",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 18.4,
+                "filled_base": 18.4,
+                "vwap_native": 1.4268,
+                "vwap_base": 1.4268,
+                "fees": [
+                    {
+                        "cost": 0.01443922,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:15.690"
+            },
+            {
+                "order_id": "148665149598",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.2,
+                "filled_base": 9.2,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.00656512,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:17.291"
+            },
+            {
+                "order_id": "dc3b5083-f6d2-4b33-a7cf-1d7b9240b0d6",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.2,
+                "filled_base": 9.2,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00722012,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:17.291"
+            },
+            {
+                "order_id": "148665150139",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.00328256,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:18.884"
+            },
+            {
+                "order_id": "e4cc5dd1-a529-4fa7-97ab-6a5ac2269729",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00361006,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:18.884"
+            },
+            {
+                "order_id": "148665152095",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.4272,
+                "vwap_base": 1.4272,
+                "fees": [
+                    {
+                        "cost": 0.00328256,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:20.477"
+            },
+            {
+                "order_id": "71a23455-4523-4986-b3d2-3fbc401d01fe",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.4268,
+                "vwap_base": 1.4268,
+                "fees": [
+                    {
+                        "cost": 0.00360981,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:20.477"
+            }
+        ],
+        "exit_order_records": [
+            {
+                "order_id": "148665155445",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 73.5,
+                "filled_base": 73.5,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.05244225,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:27.078"
+            },
+            {
+                "order_id": "feb8396b-ff19-457c-bdab-a887419eb941",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 73.5,
+                "filled_base": 73.5,
+                "vwap_native": 1.4268,
+                "vwap_base": 1.4268,
+                "fees": [
+                    {
+                        "cost": 0.05767839,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:27.079"
+            },
+            {
+                "order_id": "148665159186",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 36.7,
+                "filled_base": 36.7,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.02618545,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:28.670"
+            },
+            {
+                "order_id": "21f4a7a1-04c3-46a7-bd88-7d80260c1005",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 36.7,
+                "filled_base": 36.7,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00282527,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.00313918,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.02001228,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    },
+                    {
+                        "cost": 0.00282527,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:28.670"
+            },
+            {
+                "order_id": "148665164590",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 18.4,
+                "filled_base": 18.4,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.0131284,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:30.265"
+            },
+            {
+                "order_id": "f79a80f9-5f86-4e14-81e5-ee6c9ff349cb",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 18.4,
+                "filled_base": 18.4,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.01444023,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:30.265"
+            },
+            {
+                "order_id": "148665168697",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.2,
+                "filled_base": 9.2,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.0065642,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:31.866"
+            },
+            {
+                "order_id": "ee3e7c40-c8ff-4a7a-9c67-a60479dc4f71",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 9.2,
+                "filled_base": 9.2,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00722012,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:31.866"
+            },
+            {
+                "order_id": "148665169664",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.0032821,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:33.465"
+            },
+            {
+                "order_id": "a29609ba-7de5-43b2-8c6b-e0edfbe3d704",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00361006,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:33.465"
+            },
+            {
+                "order_id": "148665170511",
+                "leg": "long",
+                "kind": "ioc",
+                "side": "sell",
+                "venue": "binance",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.427,
+                "vwap_base": 1.427,
+                "fees": [
+                    {
+                        "cost": 0.0032821,
+                        "currency": "USDT"
+                    }
+                ],
+                "ts": "2026-05-10 09:53:35.060"
+            },
+            {
+                "order_id": "978a45a4-354f-409f-bfe0-5fcf2d824b63",
+                "leg": "short",
+                "kind": "ioc",
+                "side": "buy",
+                "venue": "bybit",
+                "symbol": "XRP/USDT:USDT",
+                "filled_native": 4.6,
+                "filled_base": 4.6,
+                "vwap_native": 1.4269,
+                "vwap_base": 1.4269,
+                "fees": [
+                    {
+                        "cost": 0.00361006,
+                        "currency": "USDT",
+                        "rate": 0.00055
+                    }
+                ],
+                "ts": "2026-05-10 09:53:35.060"
+            }
+        ],
+        "funding_history": {
+            "long": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            },
+            "short": {
+                "events": [],
+                "total_usdt": 0,
+                "non_usdt_events": []
+            }
+        }
     }
 ]

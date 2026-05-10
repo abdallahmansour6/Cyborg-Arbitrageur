@@ -156,6 +156,14 @@ class FillReceipt:
     filled_base: float             # post-resolution; 1× base tokens
     vwap_native: float             # 0.0 only if filled_native == 0
     vwap_base: float               # per-1×-base; 0.0 only if filled_base == 0
+    fees: list                     # CCXT-extracted fee captures from the authoritative receipt:
+                                   # [{cost: float, currency: str, rate?: float}, ...].
+                                   # Empty list = venue did not surface fee data on this receipt
+                                   # (e.g. some sync-zero venues only populate fee post-fetch_order
+                                   # but the resolver trusted placement). Multiple entries =
+                                   # multi-currency fees (BNB partial-pay, etc.). Foundation
+                                   # for the off-engine pnl.py analyzer — when empty, pnl.py
+                                   # falls back to taker_rate × notional estimation.
     status: str | None             # 'closed' | 'canceled' | 'expired' | 'rejected'
                                    # | 'open' (eventual not yet terminal) | None (coinex)
     r_mode: str                    # placement classification at construction time
