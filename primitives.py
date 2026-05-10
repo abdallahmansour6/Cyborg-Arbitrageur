@@ -123,3 +123,121 @@ class ExecutionPair:
     def key(self) -> str:
         """Position-state key. base_coin is unique per simultaneous routing."""
         return self.long.base_coin
+
+
+@dataclass(frozen=True)
+class FillReceipt:
+    """Fill-resolved trade outcome — the engine's authoritative view of
+    a single create_order's settled state.
+
+    Constructed exclusively by `receipt_resolver.resolve_receipt()`,
+    which honors the per-venue R-Mode catalog in `venue_overrides.py`:
+    sync-zero / sync-final venues are resolved from placement directly;
+    sync-null / eventual venues are resolved via mandatory `fetch_order(id)`
+    follow-up. The `resolution_path` field surfaces which route was taken
+    so logs and audits can attribute drift to the right layer.
+
+    Replaces `receipt.get('filled')` + `_fill_vwap()` reads scattered
+    across `execution.py`. Every fill-state read after the refactor
+    flows through this object — there is one place that knows how to
+    convert a CCXT receipt into engine-trustable numbers.
+
+    Anchored in the May 7 bybit incident (`transaction.log` 21:05:39):
+    the engine was reading `receipt['filled']` directly, the venue was
+    returning all-None, and 11 cycles of phantom zero-fills accumulated
+    real long exposure on binance against unknown bybit state. With
+    this primitive, that bug is impossible — sync-null venues are
+    classified at boundary, and the resolver enforces the fetch_order
+    follow-up before any fill state is read.
+    """
+    leg: ExecutionLeg
+    order_id: str
+    filled_native: float           # post-resolution; native units
+    filled_base: float             # post-resolution; 1× base tokens
+    vwap_native: float             # 0.0 only if filled_native == 0
+    vwap_base: float               # per-1×-base; 0.0 only if filled_base == 0
+    status: str | None             # 'closed' | 'canceled' | 'expired' | 'rejected'
+                                   # | 'open' (eventual not yet terminal) | None (coinex)
+    r_mode: str                    # placement classification at construction time
+                                   # ('sync-zero' | 'sync-null' | 'sync-final' |
+                                   # 'eventual' | 'unknown')
+    resolution_path: str           # 'placement' | 'fetch_order'
+                                   # — which call surfaced the resolved state
+    raw_create_response: dict      # original CCXT placement receipt (forensic)
+    raw_resolve_response: dict | None  # follow-up fetch_order response, if any
+
+    @property
+    def is_terminal(self) -> bool:
+        """True iff the venue reports a terminal lifecycle state.
+
+        Note: coinex returns `status=None` even on a terminal IOC; the
+        engine should NOT gate control flow on `is_terminal` alone.
+        Use `filled_base` for the actual quantity decision; `is_terminal`
+        is for logging and post-hoc auditing."""
+        return self.status in ("closed", "canceled", "expired", "rejected", "filled")
+
+    @property
+    def is_zero_fill(self) -> bool:
+        """True iff resolved filled quantity is zero — i.e., the IOC
+        auto-canceled with no match. Used by the slicing loop's recovery
+        path to decide whether to fire imbalance-recovery on the lagging leg."""
+        return self.filled_base == 0.0
+
+
+@dataclass(frozen=True)
+class BookSnapshot:
+    """Time-stamped order book — replaces the bare-dict cache that
+    `engine.order_books[(ex_id, symbol)]` currently holds.
+
+    Adds the metadata the slicing loop needs to gate "is this book
+    safe to trade against right now": liveness (was the cache updated
+    recently), sufficiency (does it have a top-of-book), and well-formedness
+    (is it crossed). Empirically motivated:
+
+      - 1.2% of bitmart yields had crossed books on a calm BTC sample
+        (verified 2026-05-09; ENGINE_FIELD_NOTES.md Table C). The slicing
+        loop's basis math reads a crossed book as a giant negative
+        spread and would trivially "pass" the basis floor at zero size.
+
+      - coinex p95 max-Δ is 2.98 s — 50× the median cluster of the other
+        12 venues. Without an explicit freshness gate, the engine cannot
+        tell a wedged stream from a quiet pair.
+
+    All cross-leg arithmetic that consumes a BookSnapshot must:
+      1. assert `is_fresh(MAX_BOOK_AGE_MS, now_ms)` — both legs.
+      2. assert `has_top_of_book()` — both legs.
+      3. assert `not is_crossed()` — both legs.
+    Failure of any of the three is treated identically to a basis-floor
+    miss: skip the cycle and retry next tick.
+    """
+    bids: list                     # list[list[float]] — [[price, size], ...] descending
+    asks: list                     # list[list[float]] — [[price, size], ...] ascending
+    venue_ts_ms: int | None        # exchange-side timestamp (None: htx/okx don't expose)
+    received_ts_ms: int            # local monotonic-ms when this delta hit our process —
+                                   # AUTHORITATIVE for staleness; never depends on venue clock
+    delta_count: int               # incremented per watch_order_book yield. Lets a watchdog
+                                   # detect "cache wedged on stale snapshot" patterns even
+                                   # when venue_ts_ms isn't exposed.
+    sequence: int | None = None    # venue-side sequence number, when exposed
+
+    def is_fresh(self, max_age_ms: int, now_ms: int) -> bool:
+        """True iff this snapshot is younger than `max_age_ms` against
+        the caller-supplied `now_ms` (typically `time.monotonic() * 1000`).
+
+        `now_ms` is a parameter (not implicit) so tests can pass a fixed
+        time and so the engine can use a single monotonic clock reading
+        across multiple legs in the same cycle (avoiding sub-ms drift
+        between leg-A.is_fresh() and leg-B.is_fresh())."""
+        return (now_ms - self.received_ts_ms) <= max_age_ms
+
+    def has_top_of_book(self) -> bool:
+        """True iff both sides expose at least one level."""
+        return bool(self.bids) and bool(self.asks)
+
+    def is_crossed(self) -> bool:
+        """True iff best-bid >= best-ask. Empirically observed on
+        bitmart (~1.2% of frames). Always indicates venue-side matching
+        glitch, never a real arbitrage opportunity at the prices we trade."""
+        if not self.has_top_of_book():
+            return False
+        return float(self.bids[0][0]) >= float(self.asks[0][0])

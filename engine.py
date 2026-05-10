@@ -1,10 +1,22 @@
 import asyncio
+import time
 from aiohttp import web
 from config import get_exchange
-from primitives import ExecutionLeg, ExecutionPair
+from primitives import BookSnapshot, ExecutionLeg, ExecutionPair
 from utils import log, load_state, save_state, append_closed_trade, now_str
 from notifier import send_pushover
 from execution import run_slicing_loop
+from venue_overrides import (
+    is_benign_warmup_error,
+    min_notional_usdt_for,
+    set_leverage_params_for,
+)
+
+
+def _now_ms() -> int:
+    """Local monotonic clock in ms — authoritative for BookSnapshot
+    staleness detection. Independent of venue clock skew."""
+    return int(time.monotonic() * 1000)
 
 
 # Max wait for the first L2 snapshot to arrive after subscribing.
@@ -39,26 +51,50 @@ class ArbitrageEngine:
 
     async def watch_order_book_loop(self, ex_id, symbol):
         """
-        Persistent CCXT Pro watch_order_book stream. Updates the RAM cache on
-        every delta tick. Survives transient network errors via sleep-retry.
+        Persistent CCXT Pro watch_order_book stream. Wraps each yielded book
+        in a BookSnapshot — adds a local-monotonic `received_ts_ms` stamp so
+        the slicing loop's `is_fresh()` gate is independent of venue clocks.
+
+        On timeout (300 s of silence) OR any other exception, we POP the cache
+        slot. Empirical anchor (ENGINE_FIELD_NOTES.md): a CCXT reconnect
+        without re-snapshotting can resume deltas against a stale cached book,
+        and the slicing loop would trade on it. Clearing on the exception
+        path ensures the loop sees `engine.order_books.get(...) is None` and
+        skips cycles until a fresh snapshot lands. The 5-second sleep on
+        non-timeout errors also rate-limits reconnect storms.
         """
         exchange = self.exchanges[ex_id]
+        delta_count = 0
         log(f"Started L2 stream for {symbol}.", ex_id)
         while True:
             try:
-                # 300s ceiling on a single await guards against silent socket death:
-                # if no deltas arrive for 5 minutes the await is forced to yield
-                # and we re-enter watch_order_book, which will reconnect if needed.
+                # 300 s ceiling on a single await guards against silent socket death.
                 book = await asyncio.wait_for(
                     exchange.watch_order_book(symbol), timeout=300.0
                 )
-                self.order_books[(ex_id, symbol)] = book
+                delta_count += 1
+                self.order_books[(ex_id, symbol)] = BookSnapshot(
+                    bids=book.get("bids") or [],
+                    asks=book.get("asks") or [],
+                    venue_ts_ms=book.get("timestamp"),
+                    received_ts_ms=_now_ms(),
+                    delta_count=delta_count,
+                    sequence=book.get("nonce"),
+                )
             except asyncio.TimeoutError:
-                pass
+                # Silent stream — drop the cache slot so any concurrent
+                # slicing loop sees no book (and skips its cycle) until a
+                # fresh snapshot arrives. The watch loop iterates and
+                # re-enters watch_order_book on the next loop turn.
+                self.order_books.pop((ex_id, symbol), None)
+                log(f"L2 stream silence ≥300 s on {symbol}: cache cleared.", ex_id)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
                 log(f"L2 stream error for {symbol}: {e}", ex_id)
+                # CCXT reconnect may resume on a stale snapshot — null the
+                # cache so the slicing loop never trades on a ghost book.
+                self.order_books.pop((ex_id, symbol), None)
                 await asyncio.sleep(5)
 
     async def rest_heartbeat_loop(self, ex_id):
@@ -162,8 +198,45 @@ class ArbitrageEngine:
         raw_min_native = market.get("limits", {}).get("amount", {}).get("min") or 0
         return raw_min_native * leg.multiplier * leg.contract_size
 
+    def _min_notional_for_leg(self, leg: ExecutionLeg) -> float:
+        """USDT notional floor for one leg.
+
+        Reads CCXT-published `market.limits.cost.min`; falls back via
+        `venue_overrides.min_notional_usdt_for` (per-venue override OR
+        global default DEFAULT_MIN_NOTIONAL_USDT) when CCXT exposes None.
+
+        9 of 13 venues return None for cost.min — the survey is in
+        ENGINE_FIELD_NOTES.md Table E. The fallback is empirically
+        grounded: 2026-05-10 mexc × bitget smoketest crashed at 2-XRP
+        slice (~$2.84 notional) with both venues rejecting at 5 USDT,
+        even though neither published a value."""
+        market = self.exchanges[leg.exchange].markets[leg.symbol]
+        ccxt_value = market.get("limits", {}).get("cost", {}).get("min")
+        return min_notional_usdt_for(leg.exchange, ccxt_value)
+
+    def _step_base_for_leg(self, leg: ExecutionLeg) -> float:
+        """Smallest base-equivalent quantity step the venue accepts.
+
+        Used by the slicing loop's snap-aware floor — the symmetric-snap
+        rounds DOWN to a multiple of `max(long_step, short_step)`. If the
+        composite dispatch floor isn't already a multiple of that step,
+        post-snap can drop us below the floor by up to one step. The
+        loop ceils the floor to the next step boundary to compensate.
+
+        Returns native_precision_step × leg.base_per_native. Falls back
+        to 0.0 if precision unavailable (caller skips snap-aware rounding)."""
+        market = self.exchanges[leg.exchange].markets[leg.symbol]
+        native_step = market.get("precision", {}).get("amount") or 0
+        return float(native_step) * leg.base_per_native
+
     def _pair_dust(self, pair: ExecutionPair) -> float:
-        """Dust floor for a pair (max of either leg's min lot, in base)."""
+        """Pair-level lot floor (max of either leg's min lot, in base).
+
+        NOTE: lot-only — does NOT include min-notional or snap-buffer.
+        For the full dispatch floor (lot + notional + snap-safe rounding),
+        use `execution._compute_dispatch_floor_base` per cycle. This
+        method survives for the SLICE START log line and any caller that
+        needs the static lot floor specifically."""
         return max(self._min_base_for_leg(pair.long), self._min_base_for_leg(pair.short))
 
     def _serialize_leg(self, leg: ExecutionLeg) -> dict:
@@ -174,6 +247,50 @@ class ArbitrageEngine:
             "multiplier": leg.multiplier,
             "contract_size": leg.contract_size,
         }
+
+    async def _set_leverage_for_leg(self, leg: ExecutionLeg, leverage: int):
+        """Apply venue-specific set_leverage param dicts to one leg.
+
+        Some venues (mexc, bitmart, bingx) require structural params
+        CCXT validates client-side. The override map in
+        `venue_overrides.set_leverage_params_for` returns a LIST of
+        param dicts — each one drives one set_leverage call. Most
+        venues are a single empty-dict call; mexc fans out two
+        (`positionType=1` then `=2`) to set both directions when in
+        hedge mode (no-op in one-way mode).
+
+        Sequential await per call (not gathered) — venues sometimes
+        rate-limit close-together calls on the same symbol, and
+        leverage setup is one-shot at warmup so the latency is
+        immaterial.
+
+        Idempotency-as-error handling: several venues (bybit
+        `110043 leverage not modified`, anchor: 2026-05-10 binance ×
+        bybit warmup) raise an exception when the leverage is already
+        at the requested value. The classifier
+        `venue_overrides.is_benign_warmup_error` knows the per-venue
+        substring signatures; benign errors are logged and skipped,
+        unrecognized exceptions propagate (loud-fail by default).
+        New venue signatures are added to
+        `venue_overrides.VENUE_BENIGN_WARMUP_ERROR_SIGNATURES` as
+        empirically surfaced — engine.py stays free of venue-specific
+        string parsing."""
+        ex = self.exchanges[leg.exchange]
+        for params in set_leverage_params_for(leg.exchange):
+            try:
+                await ex.set_leverage(leverage, leg.symbol, params=params)
+            except Exception as e:
+                is_benign, description = is_benign_warmup_error(leg.exchange, e)
+                if is_benign:
+                    log(
+                        f"Leverage already at {leverage}x on {leg.exchange}:{leg.symbol} "
+                        f"({leg.exchange}: {description}); proceeding.",
+                        "WARMUP",
+                    )
+                    continue
+                # Unrecognized — propagate. handle_warmup catches and
+                # surfaces as WARMUP_ERROR + 400 response.
+                raise
 
     # -------- IPC Handlers --------
 
@@ -207,14 +324,17 @@ class ArbitrageEngine:
                     )
                 legs.append(ExecutionLeg.from_market(ex_id, market))
 
-            # 3. Set leverage per leg — audit silent per-venue failures
+            # 3. Set leverage per leg — fan out venue-specific param dicts.
+            # `_set_leverage_for_leg` consumes `set_leverage_params_for(venue)`
+            # and runs every required call sequentially. Inter-leg parallel
+            # via gather; intra-leg sequential inside the helper.
             log(
                 f"Setting leverage to {leverage}x on {len(legs)} legs: "
                 f"{[(leg.exchange, leg.symbol) for leg in legs]}",
                 "WARMUP",
             )
             leverage_results = await asyncio.gather(
-                *(self.exchanges[leg.exchange].set_leverage(leverage, leg.symbol) for leg in legs),
+                *(self._set_leverage_for_leg(leg, leverage) for leg in legs),
                 return_exceptions=True,
             )
             failed = [
@@ -247,7 +367,7 @@ class ArbitrageEngine:
             # version of the empirical-probing methodology (the warmup IS a probe).
             for leg in legs:
                 book = self.order_books[(leg.exchange, leg.symbol)]
-                top_of_book_native = (float(book["bids"][0][0]) + float(book["asks"][0][0])) / 2.0
+                top_of_book_native = (float(book.bids[0][0]) + float(book.asks[0][0])) / 2.0
                 log(
                     f"LEG FINGERPRINT {leg.exchange}:{leg.symbol} "
                     f"| base_coin={leg.base_coin} "
@@ -357,6 +477,25 @@ class ArbitrageEngine:
             return web.json_response({"error": f"Entry failed: {e}"}, status=500)
         finally:
             self._abort_events.pop(pos_key, None)
+
+        # Asymmetric residual halt — slicing loop returned cleanly but
+        # detected naked exposure on one venue. Pushover P2 with the
+        # exact per-venue exposure so operator can manually reconcile
+        # before the position drifts further.
+        if result.halt_reason == "asymmetric_residual":
+            residual = abs(result.qty_long_base - result.qty_short_base)
+            asyncio.create_task(
+                asyncio.to_thread(
+                    send_pushover,
+                    f"Asymmetric residual on {pos_key}: "
+                    f"long_filled={result.qty_long_base:.8f} on {pair.long.exchange}, "
+                    f"short_filled={result.qty_short_base:.8f} on {pair.short.exchange}, "
+                    f"residual={residual:.8f} base. Engine recorded {result.filled_base:.8f} "
+                    f"symmetric. Manual reconciliation required.",
+                    f"CRITICAL: ASYMMETRIC RESIDUAL on {pos_key} (entry)",
+                    2,
+                )
+            )
 
         if result.filled_base > 0:
             if pos_key in self.positions:
@@ -498,6 +637,24 @@ class ArbitrageEngine:
             return web.json_response({"error": f"Exit failed: {e}"}, status=500)
         finally:
             self._abort_events.pop(pos_key, None)
+
+        # Asymmetric residual halt — same Pushover hook as entry.
+        # On exit this typically means one leg over-reduced (or under-reduced)
+        # vs the other; the operator's net position changed unexpectedly.
+        if result.halt_reason == "asymmetric_residual":
+            residual = abs(result.qty_long_base - result.qty_short_base)
+            asyncio.create_task(
+                asyncio.to_thread(
+                    send_pushover,
+                    f"Asymmetric residual on {pos_key} (exit): "
+                    f"long_filled={result.qty_long_base:.8f} on {pair.long.exchange}, "
+                    f"short_filled={result.qty_short_base:.8f} on {pair.short.exchange}, "
+                    f"residual={residual:.8f} base. Engine recorded {result.filled_base:.8f} "
+                    f"symmetric exit. Manual reconciliation required.",
+                    f"CRITICAL: ASYMMETRIC RESIDUAL on {pos_key} (exit)",
+                    2,
+                )
+            )
 
         # Blend exit-side VWAPs against cumulative exit_qty_base (multi-leg unwinds).
         if result.filled_base > 0:

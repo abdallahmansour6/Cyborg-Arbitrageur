@@ -1,0 +1,380 @@
+[
+    {
+        "base_coin": "BTC",
+        "long": {
+            "exchange": "binance",
+            "symbol": "BTC/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "bybit",
+            "symbol": "BTC/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 0.001,
+        "exit_qty_base": 0.001,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 80870.5,
+        "entry_vwap_short_base": 80871.2,
+        "entry_basis_bps": 0.08655776463300305,
+        "exit_vwap_long_base": 80870.4,
+        "exit_vwap_short_base": 80871.3,
+        "exit_basis_bps": -0.11128855452968914,
+        "round_trip_basis_bps": -0.02473078989668609,
+        "opened_at": "2026-05-09 19:02:26.240",
+        "closed_at": "2026-05-09 19:02:32.833"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "kucoinfutures",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "okx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 100.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.42134,
+        "entry_vwap_short_base": 1.42,
+        "entry_basis_bps": -9.432169328557082,
+        "exit_vwap_long_base": 1.42147,
+        "exit_vwap_short_base": 1.421,
+        "exit_basis_bps": 3.306983011254088,
+        "round_trip_basis_bps": -6.125186317302994,
+        "opened_at": "2026-05-09 22:13:52.469",
+        "closed_at": "2026-05-09 22:13:59.370"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "kucoinfutures",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "okx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 100.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.42101,
+        "entry_vwap_short_base": 1.42,
+        "entry_basis_bps": -7.110147447563912,
+        "exit_vwap_long_base": 1.421,
+        "exit_vwap_short_base": 1.421,
+        "exit_basis_bps": 0.0,
+        "round_trip_basis_bps": -7.110147447563912,
+        "opened_at": "2026-05-09 23:21:25.297",
+        "closed_at": "2026-05-09 23:21:32.633"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "kucoinfutures",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "okx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 100.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.41992,
+        "entry_vwap_short_base": 1.419,
+        "entry_basis_bps": -6.481337973595817,
+        "exit_vwap_long_base": 1.41991,
+        "exit_vwap_short_base": 1.42,
+        "exit_basis_bps": -0.6338229028379313,
+        "round_trip_basis_bps": -7.115160876433748,
+        "opened_at": "2026-05-09 23:34:00.154",
+        "closed_at": "2026-05-09 23:34:07.047"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "htx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "bitmart",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 0.1
+        },
+        "entry_qty_base": 150.0,
+        "exit_qty_base": 150.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4187,
+        "entry_vwap_short_base": 1.4196,
+        "entry_basis_bps": 6.341824331465319,
+        "exit_vwap_long_base": 1.41875,
+        "exit_vwap_short_base": 1.4197,
+        "exit_basis_bps": -6.69379414821474,
+        "round_trip_basis_bps": -0.3519698167494205,
+        "opened_at": "2026-05-09 23:49:21.560",
+        "closed_at": "2026-05-09 23:49:28.275"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "kucoinfutures",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "okx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 100.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.42052,
+        "entry_vwap_short_base": 1.419,
+        "entry_basis_bps": -10.706034822786709,
+        "exit_vwap_long_base": 1.42047,
+        "exit_vwap_short_base": 1.42,
+        "exit_basis_bps": 3.309311487183251,
+        "round_trip_basis_bps": -7.396723335603458,
+        "opened_at": "2026-05-10 00:31:48.645",
+        "closed_at": "2026-05-10 00:31:55.782"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "mexc",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "bitget",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 19.0,
+        "exit_qty_base": 19.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4197210526315789,
+        "entry_vwap_short_base": 1.4194736842105262,
+        "entry_basis_bps": -1.7425252156377151,
+        "exit_vwap_long_base": 1.4195,
+        "exit_vwap_short_base": 1.4195,
+        "exit_basis_bps": 0.0,
+        "round_trip_basis_bps": -1.7425252156377151,
+        "opened_at": "2026-05-10 00:32:28.209",
+        "closed_at": "2026-05-10 00:32:38.721"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "htx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "bitmart",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 0.1
+        },
+        "entry_qty_base": 150.0,
+        "exit_qty_base": 150.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.41906,
+        "entry_vwap_short_base": 1.4198,
+        "entry_basis_bps": 5.213360292511521,
+        "exit_vwap_long_base": 1.41911,
+        "exit_vwap_short_base": 1.4199,
+        "exit_basis_bps": -5.565320305316616,
+        "round_trip_basis_bps": -0.3519600128050948,
+        "opened_at": "2026-05-10 00:33:31.680",
+        "closed_at": "2026-05-10 00:33:38.513"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "binance",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "bybit",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 19.0,
+        "exit_qty_base": 19.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4203752631578948,
+        "entry_vwap_short_base": 1.4203000000000001,
+        "entry_basis_bps": -0.5298962459437624,
+        "exit_vwap_long_base": 1.4205,
+        "exit_vwap_short_base": 1.4207,
+        "exit_basis_bps": -1.4078558355622834,
+        "round_trip_basis_bps": -1.9377520815060458,
+        "opened_at": "2026-05-10 02:27:13.473",
+        "closed_at": "2026-05-10 02:27:23.251"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "gate",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "coinex",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4201,
+        "entry_vwap_short_base": 1.4206,
+        "entry_basis_bps": 3.5202590910702782,
+        "exit_vwap_long_base": 1.4196,
+        "exit_vwap_short_base": 1.4204,
+        "exit_basis_bps": -5.633802816902352,
+        "round_trip_basis_bps": -2.113543725832074,
+        "opened_at": "2026-05-10 02:30:34.086",
+        "closed_at": "2026-05-10 02:30:40.710"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "gate",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "short": {
+            "exchange": "coinex",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4172,
+        "entry_vwap_short_base": 1.4178,
+        "entry_basis_bps": 4.232804232803767,
+        "exit_vwap_long_base": 1.4172,
+        "exit_vwap_short_base": 1.418,
+        "exit_basis_bps": -5.643340857787189,
+        "round_trip_basis_bps": -1.410536624983422,
+        "opened_at": "2026-05-10 02:32:52.424",
+        "closed_at": "2026-05-10 02:32:59.456"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "bingx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "xt",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4176,
+        "entry_vwap_short_base": 1.4158,
+        "entry_basis_bps": -12.70558339803786,
+        "exit_vwap_long_base": 1.4169,
+        "exit_vwap_short_base": 1.4159,
+        "exit_basis_bps": 7.060152499294776,
+        "round_trip_basis_bps": -5.645430898743084,
+        "opened_at": "2026-05-10 04:37:42.419",
+        "closed_at": "2026-05-10 04:37:50.454"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "bingx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "xt",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4161,
+        "entry_vwap_short_base": 1.4146,
+        "entry_basis_bps": -10.59808527925838,
+        "exit_vwap_long_base": 1.4158,
+        "exit_vwap_short_base": 1.4146,
+        "exit_basis_bps": 8.479366873939146,
+        "round_trip_basis_bps": -2.1187184053192336,
+        "opened_at": "2026-05-10 04:46:08.759",
+        "closed_at": "2026-05-10 04:46:17.597"
+    },
+    {
+        "base_coin": "XRP",
+        "long": {
+            "exchange": "bingx",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 1.0
+        },
+        "short": {
+            "exchange": "xt",
+            "symbol": "XRP/USDT:USDT",
+            "multiplier": 1,
+            "contract_size": 10.0
+        },
+        "entry_qty_base": 10.0,
+        "exit_qty_base": 10.0,
+        "residual_dust_base": 0.0,
+        "entry_vwap_long_base": 1.4171,
+        "entry_vwap_short_base": 1.4155,
+        "entry_basis_bps": -11.297041587234665,
+        "exit_vwap_long_base": 1.4166,
+        "exit_vwap_short_base": 1.4156,
+        "exit_basis_bps": 7.06164818868803,
+        "round_trip_basis_bps": -4.235393398546635,
+        "opened_at": "2026-05-10 05:21:19.820",
+        "closed_at": "2026-05-10 05:21:26.984"
+    }
+]

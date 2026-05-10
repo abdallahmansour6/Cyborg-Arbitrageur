@@ -217,3 +217,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Engine probe outputs (per-run JSONL artifacts; field-notes tables generated from these)
+probe_logs/
