@@ -32,12 +32,12 @@ Create `.env` in project root. For each exchange you trade:
 ```
 {EXCHANGE_ID}_API_KEY=...
 {EXCHANGE_ID}_SECRET=...
-{EXCHANGE_ID}_PASSWORD=...        # only for OKX, KuCoin, Bitget, etc.
+{EXCHANGE_ID}_PASSWORD=...        # only for OKX, KuCoin, Bitget, and similar venues that require a passphrase
 PUSHOVER_TOKEN=...
 PUSHOVER_USER=...
 ```
 
-`{EXCHANGE_ID}` is the **canonical CCXT id, uppercased**: `BINANCE_API_KEY`, `KUCOINFUTURES_PASSWORD`, `GATE_SECRET`, etc. Don't rename to "friendlier" names — `config.get_exchange()` matches on the canonical id directly.
+`{EXCHANGE_ID}` is the **canonical CCXT id, uppercased**: `BINANCE_API_KEY`, `KUCOINFUTURES_PASSWORD`, `GATE_SECRET`, and so on. Don't rename to "friendlier" names — `config.get_exchange()` matches on the canonical id directly.
 
 12 verified venues: binance, bingx, bitget, bitmart, bybit, coinex, gate, htx, kucoinfutures, mexc, okx, xt. Phemex walked away (see `ENGINE_FIELD_NOTES.md`).
 
@@ -142,7 +142,7 @@ closed_at           | pair          | coin | quantity   | notional | rt_bps | pr
 TOTAL               |               |      |            |          |        | -0.123930  | 0.714931  | +0.000000 | -0.838861
 ```
 
-`true_pnl = price + funding − fees`. Run within ~24h of trade close — KuCoin's `fetch_my_trades` retention is short. Mutates `closed_trades.json` atomically (write-temp-rename); subsequent runs are idempotent. Race-safe against engine appends.
+`true_pnl = price + funding − fees`. Run within roughly 24 hours of trade close — KuCoin's `fetch_my_trades` retention is short. Mutates `closed_trades.json` atomically (write-temp-rename); subsequent runs are idempotent. Race-safe against engine appends.
 
 ---
 
@@ -164,7 +164,7 @@ A `target` or `dust` halt on `exit` clears the ledger entry. Otherwise the resid
 
 ## Failure modes & alerts
 
-**Pushover priority 2** (retry/expire bypasses DND):
+**Pushover priority 2** (retry-and-expire alert that bypasses Do Not Disturb):
 
 - **IOC dispatch failure** — either leg's `create_order` raised. Loop halts; one leg may have filled — manual reconcile.
 - **Recovery dispatch failure** — uncapped market order on the lagging leg failed. Delta-neutrality not guaranteed; immediate manual intervention.
@@ -272,7 +272,7 @@ Scale-ins blend `entry_*_base` quantity-weighted; partial exits blend `exit_*_ba
 | `venue_overrides.py` | Single source of truth for per-venue quirks. |
 | `config.py` | CCXT Pro instance factory (env-driven creds). |
 | `utils.py` | Logging + JSON state I/O. |
-| `notifier.py` | Pushover P2 alerts. |
+| `notifier.py` | Pushover priority-2 alerts. |
 | `ccxt_patches.py` | Monkey-patches for upstream CCXT bugs. |
 
 ### Off-engine
@@ -320,7 +320,7 @@ Per-cycle output:
 [BOOK]  LONG: bid=… ask=… (spread=…bps)  SHORT: bid=… ask=… (spread=…bps)  raw_basis=…bps
 [SLICE] IOC slice dispatch_base=… safe_ceiling_base=… (haircut=×N) limits long_native=… short_native=… projected_basis=…bps
 [RECOVERY] {side} {quantity} on {venue} (filled_base=…, delta_base=…)        ← only if recovery fires
-[SLICE] filled long={quantity}@{volume-weighted-avg-price} short={quantity}@{volume-weighted-avg-price} realized_basis=…bps recovered={bool} cumulative=…/…
+[SLICE] filled long={quantity}@{volume-weighted-average-price} short={quantity}@{volume-weighted-average-price} realized_basis=…bps recovered={bool} cumulative=…/…
 ```
 
 - `raw_basis` — basis at top-of-book (no depth walk).
@@ -328,7 +328,7 @@ Per-cycle output:
 - `dispatch_base` — post-haircut size actually sent. `(haircut=×N)` shows effective ratio: usually `DEPTH_DISCOUNT` (0.5), reverts to `1.00` when discounting would drop below dust (residuals / tiny sizes).
 - `realized_basis` — post-recovery combined basis (what you actually captured).
 
-**Tuning DEPTH_DISCOUNT** — compare `dispatch_base` vs the `filled` quantity. Consistently filling near `dispatch_base` → haircut conservative, could be raised. Consistently below → phantom liquidity is real, the discount is earning its keep.
+**Tuning DEPTH_DISCOUNT** — compare `dispatch_base` versus the `filled` quantity. Consistently filling near `dispatch_base` → haircut conservative, could be raised. Consistently below → phantom liquidity is real, the discount is earning its keep.
 
 Loop end: `[SLICE] Slicing loop END filled=…/… halt_reason=…`.
 
@@ -369,7 +369,7 @@ The `--I-AM-FUNDED-AND-AUTHORIZED-FOR-{VENUE}` handshake is deliberate friction 
 
 ### Class 4 — Watchdogs
 
-⚠️ Empty by design. Operator opted out — explicit cycle-invariants in the slicing loop are the safety net (asymmetric_residual halt, etc.).
+⚠️ Empty by design. Operator opted out — explicit cycle-invariants in the slicing loop are the safety net (asymmetric_residual halt and the book-liveness gate).
 
 ---
 
@@ -400,9 +400,9 @@ CLI acknowledgment on completion: `filled_base=X/Y | halt_reason=Z | realized_ba
 - **Abort is atomic at cycle boundaries.** Dispatch + recovery is never interrupted mid-flight; abort always leaves a perfectly hedged position.
 - **`enableRateLimit=False`** by design — exchange matching engines reject overruns; we don't self-throttle.
 - **Recovery bypasses basis gating.** When asymmetric fill occurs, neutrality dominates marginal cost on a fractional remainder.
-- **Cycle-invariant halt is the safety net.** After dispatch + recovery, both legs must be symmetric within the smaller leg's min-lot tolerance, or the loop halts (`asymmetric_residual` + Pushover P2).
-- **Receipt-captured fees are NOT trusted by pnl.py.** Engine writes whatever fees come naturally; pnl.py always re-fetches via `fetch_my_trades`. Per-venue receipt fee shapes vary unpredictably (htx negative sign, bitmart base-coin currency, xt None values, etc.). Engine stays fast; pnl.py owns interpretation.
-- **Composite per-cycle floor.** `max(both legs' min-lot, max(both legs' min-notional)/mid)` ceil-rounded to the next snap step. Used by halt-on-dust threshold AND `min_dispatch_base` AND recovery's target-leg dust check.
+- **Cycle-invariant halt is the safety net.** After dispatch + recovery, both legs must be symmetric within the smaller leg's minimum-lot tolerance, or the loop halts (`asymmetric_residual` + Pushover priority-2 alert).
+- **Receipt-captured fees are NOT trusted by pnl.py.** Engine writes whatever fees come naturally; pnl.py always re-fetches via `fetch_my_trades`. Per-venue receipt fee shapes vary unpredictably (htx negative sign, bitmart base-coin currency, xt None values, and others). Engine stays fast; pnl.py owns interpretation.
+- **Composite per-cycle floor.** `maximum(both legs' minimum-lot, maximum(both legs' minimum-notional) / mid_price_base)` ceil-rounded to the next snap step. Used by the halt-on-dust threshold, by `min_dispatch_base`, and by recovery's target-leg dust check.
 - **Symmetric snap before dispatch.** Each cycle's slice is snapped to the largest base quantity that survives precision-rounding identically on BOTH legs. Avoids asymmetric fills from divergent leg precisions (for example, KuCoin contract_size=10 versus OKX contract_size=100).
-- **Run pnl.py within ~24h of trade close.** KuCoin's `fetch_my_trades` retention is short. Mutated `closed_trades.json` is then idempotent for subsequent runs.
-- **Singapore VPS for production.** Every venue 451s/`ExchangeNotAvailable`s on non-Asian residential IPs. Dev from non-Asia needs NordVPN-Singapore.
+- **Run pnl.py within roughly 24 hours of trade close.** KuCoin's `fetch_my_trades` retention is short. Mutated `closed_trades.json` is then idempotent for subsequent runs.
+- **Singapore VPS for production.** Every venue 451s or raises `ExchangeNotAvailable` on non-Asian residential IPs. Development from non-Asia needs NordVPN-Singapore.
