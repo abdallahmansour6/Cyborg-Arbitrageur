@@ -555,7 +555,7 @@ def render_table(rows: list) -> None:
         ("closed_at", 19),
         ("pair", 26),
         ("coin", 5),
-        ("qty", 10),
+        ("quantity", 10),
         ("notional", 11),
         ("rt_bps", 8),
         ("price_pnl", 11),

@@ -4,7 +4,7 @@ Discretionary cross-exchange perp-perp funding-rate arbitrage. Three processes:
 
 ```
 [cli.py]  ──HTTP POST──▶  [engine.py daemon]  ──CCXT Pro──▶  [exchanges]
-   stateless                  always-on                          WS + REST
+   stateless                  always-on                       WebSocket + REST
    one-shot                   RAM caches + position ledger             │
                                        │                               │
                                        ▼                               │
@@ -15,8 +15,8 @@ Discretionary cross-exchange perp-perp funding-rate arbitrage. Three processes:
                                                              on-demand analyzer
 ```
 
-- **Engine** — pre-loads markets, holds WebSocket L2 streams, runs the Synchronized Smart Slicing loop, captures per-order facts into `closed_trades.json` on dust-clear.
-- **CLI** — stateless one-shot. Each invocation dispatches one IPC call and prints the ack.
+- **Engine** — pre-loads markets, holds WebSocket level-2 streams, runs the Synchronized Smart Slicing loop, captures per-order facts into `closed_trades.json` on dust-clear.
+- **CLI** — stateless one-shot. Each invocation dispatches one local HTTP call and prints the acknowledgment.
 - **PnL analyzer** — off-engine. Enriches fees via `fetch_my_trades`, joins funding via `fetch_funding_history`, computes `true_pnl = price + funding − fees`. Engine critical path is never burdened.
 
 ---
@@ -77,14 +77,13 @@ python cli.py warmup --legs binance:1000CHEEMS/USDT:USDT bybit:1000000CHEEMS/USD
 ### Entry (Sip)
 
 ```bash
-python cli.py entry --long binance:XRP/USDT:USDT --short bybit:XRP/USDT:USDT \
-                    --base-amount 26300 --min-entry-basis-bps -25 --max-duration-s 45
+python cli.py entry --long binance:XRP/USDT:USDT --short bybit:XRP/USDT:USDT --base-amount 26300 --min-entry-basis-bps -25 --max-duration-s 45
 ```
 
-| Arg | Meaning |
+| Argument | Meaning |
 |---|---|
 | `--long` / `--short` | `exchange:symbol`. Long = cheaper-funding venue; short = expensive-funding venue. |
-| `--base-amount` | Target qty in **true 1× base tokens** of the underlying. Not contracts, not prefix-units. |
+| `--base-amount` | Target quantity in **true 1× base tokens** of the underlying. Not contracts, not prefix-units. |
 | `--min-entry-basis-bps` | Net basis floor (per-1×-base price units). Slices below this floor don't dispatch. **Live discretionary knob** — fire tight, observe, retune. |
 | `--max-duration-s` | Hard wall-clock deadline. Partial fills stay as a perfectly hedged position; deadline never forces slippage. |
 
@@ -100,7 +99,7 @@ Watch the engine console for `[SLICE]` lines reporting per-cycle realized basis 
 python cli.py abort --pair CHEEMS
 ```
 
-Halts at the **next cycle boundary** — never mid-IOC. Accumulated fills stay perfectly hedged. Re-fire entry with retuned basis floor for the remaining qty.
+Halts at the **next cycle boundary** — never mid-IOC. Accumulated fills stay perfectly hedged. Re-fire entry with retuned basis floor for the remaining quantity.
 
 ### Exit (unwind)
 
@@ -138,9 +137,9 @@ python3 pnl.py --verbose
 Output:
 
 ```
-closed_at           | pair          | coin | qty     | notional | rt_bps | price_pnl  | fees      | funding   | true_pnl
-2026-05-10 07:46:20 | binance:bybit | XRP  | 19.0000 |  26.9800 |  -1.41 | -0.003800  | 0.056658  | +0.000000 | -0.060458
-TOTAL               |               |      |         |          |        | -0.123930  | 0.714931  | +0.000000 | -0.838861
+closed_at           | pair          | coin | quantity   | notional | rt_bps | price_pnl  | fees      | funding   | true_pnl
+2026-05-10 07:46:20 | binance:bybit | XRP  | 19.0000    |  26.9800 |  -1.41 | -0.003800  | 0.056658  | +0.000000 | -0.060458
+TOTAL               |               |      |            |          |        | -0.123930  | 0.714931  | +0.000000 | -0.838861
 ```
 
 `true_pnl = price + funding − fees`. Run within ~24h of trade close — KuCoin's `fetch_my_trades` retention is short. Mutates `closed_trades.json` atomically (write-temp-rename); subsequent runs are idempotent. Race-safe against engine appends.
@@ -156,8 +155,8 @@ Every slicing loop returns one of:
 | `target` | Full target `--base-amount` filled. |
 | `deadline` | `--max-duration-s` expired. Partial position kept hedged. |
 | `aborted` | Operator issued `abort`. |
-| `dust` | Remaining qty below the per-cycle composite floor (lot + notional + snap-safe step) — untradeable. |
-| `asymmetric_residual` | Post-recovery cycle ended with `\|cycle_qty_long − cycle_qty_short\|` ≥ smaller-leg min-lot. Engine halts to prevent compounding naked exposure. Per-leg quantities reported; manual reconciliation required. **Fires Pushover P2.** |
+| `dust` | Remaining quantity below the per-cycle composite floor (lot + notional + snap-safe step) — untradeable. |
+| `asymmetric_residual` | Post-recovery cycle ended with `\|cycle_qty_long − cycle_qty_short\|` ≥ smaller-leg minimum-lot. Engine halts to prevent compounding naked exposure. Per-leg quantities reported; manual reconciliation required. **Fires Pushover priority-2 alert.** |
 
 A `target` or `dust` halt on `exit` clears the ledger entry. Otherwise the residual is preserved.
 
@@ -211,7 +210,7 @@ Keyed by **base coin** (multiplier-stripped). All quantities in 1× base tokens;
   "CHEEMS": {
     "long":  {"exchange": "binance", "symbol": "1000CHEEMS/USDT:USDT", "multiplier": 1000, "contract_size": 1.0},
     "short": {"exchange": "bybit", "symbol": "1000000CHEEMS/USDT:USDT", "multiplier": 1000000, "contract_size": 1.0},
-    "amount_base": 700000.0,        // currently open (entry_qty − exit_qty)
+    "amount_base": 700000.0,        // currently open (entry_qty_base − exit_qty_base)
     "entry_qty_base": 1000000.0, "entry_vwap_long_base":  6.3e-06, "entry_vwap_short_base": 6.4e-06, "entry_basis_bps": 15.87,
     "exit_qty_base":  300000.0,  "exit_vwap_long_base":   6.4e-06, "exit_vwap_short_base":  6.3e-06, "exit_basis_bps":  -15.87,
     "opened_at": "2026-05-07 14:32:11.456",
@@ -221,7 +220,7 @@ Keyed by **base coin** (multiplier-stripped). All quantities in 1× base tokens;
 }
 ```
 
-Scale-ins blend `entry_*_base` qty-weighted; partial exits blend `exit_*_base`. Ledger entry is deleted on dust-clear.
+Scale-ins blend `entry_*_base` quantity-weighted; partial exits blend `exit_*_base`. Ledger entry is deleted on dust-clear.
 
 ### `closed_trades.json` — append-only round-trip archive
 
@@ -266,7 +265,7 @@ Scale-ins blend `entry_*_base` qty-weighted; partial exits blend `exit_*_base`. 
 | File | Role |
 |---|---|
 | `engine.py` | Always-on async daemon. |
-| `cli.py` | One-shot IPC client. |
+| `cli.py` | One-shot command-line client (talks to the engine over local HTTP on port 8080). |
 | `execution.py` | Slicing logic (project, dispatch, recover, asymmetric-residual halt). |
 | `primitives.py` | `ExecutionLeg`, `ExecutionPair`, `FillReceipt`, `BookSnapshot`. |
 | `receipt_resolver.py` | Per-venue receipt resolution (R-Mode catalog, fetch_order resilience, fee dedup). |
@@ -307,7 +306,7 @@ Same coin, different per-contract multipliers across venues. CHEEMS appears as `
 
 Effective conversion: `1 native contract = (multiplier × contract_size) base tokens`.
 
-**Operator's contract:** `--base-amount` is always 1× of the underlying. Engine derives per-leg native qty at the wire boundary. Single primitive (`primitives.ExecutionLeg`) owns the math; no inline multiplier arithmetic anywhere else.
+**Operator's contract:** `--base-amount` is always 1× of the underlying. Engine derives per-leg native quantity at the wire boundary. Single primitive (`primitives.ExecutionLeg`) owns the math; no inline multiplier arithmetic anywhere else.
 
 **Probe before deploying** any new asymmetric pair — the `LEG FINGERPRINT` line at warmup is the runtime probe; both legs must agree on `1 base ≈ $X` to single-bp tolerance.
 
@@ -320,8 +319,8 @@ Per-cycle output:
 ```
 [BOOK]  LONG: bid=… ask=… (spread=…bps)  SHORT: bid=… ask=… (spread=…bps)  raw_basis=…bps
 [SLICE] IOC slice dispatch_base=… safe_ceiling_base=… (haircut=×N) limits long_native=… short_native=… projected_basis=…bps
-[RECOVERY] {side} {qty} on {venue} (filled_base=…, delta_base=…)        ← only if recovery fires
-[SLICE] filled long={qty}@{vwap} short={qty}@{vwap} realized_basis=…bps recovered={bool} cumulative=…/…
+[RECOVERY] {side} {quantity} on {venue} (filled_base=…, delta_base=…)        ← only if recovery fires
+[SLICE] filled long={quantity}@{volume-weighted-avg-price} short={quantity}@{volume-weighted-avg-price} realized_basis=…bps recovered={bool} cumulative=…/…
 ```
 
 - `raw_basis` — basis at top-of-book (no depth walk).
@@ -329,7 +328,7 @@ Per-cycle output:
 - `dispatch_base` — post-haircut size actually sent. `(haircut=×N)` shows effective ratio: usually `DEPTH_DISCOUNT` (0.5), reverts to `1.00` when discounting would drop below dust (residuals / tiny sizes).
 - `realized_basis` — post-recovery combined basis (what you actually captured).
 
-**Tuning DEPTH_DISCOUNT** — compare `dispatch_base` vs the `filled` qty. Consistently filling near `dispatch_base` → haircut conservative, could be raised. Consistently below → phantom liquidity is real, the discount is earning its keep.
+**Tuning DEPTH_DISCOUNT** — compare `dispatch_base` vs the `filled` quantity. Consistently filling near `dispatch_base` → haircut conservative, could be raised. Consistently below → phantom liquidity is real, the discount is earning its keep.
 
 Loop end: `[SLICE] Slicing loop END filled=…/… halt_reason=…`.
 
@@ -361,12 +360,9 @@ python3 engine_probes.py ioc_honor BTC/USDT:USDT
 # ⚠️ receipt_shape SUPERSEDED for venue verification — use fill_resolution
 
 # Class 3 — capital at risk (real fills)
-python3 engine_probes.py fill_resolution \
-  --venue=kucoinfutures --I-AM-FUNDED-AND-AUTHORIZED-FOR-KUCOINFUTURES
+python3 engine_probes.py fill_resolution --venue=kucoinfutures --I-AM-FUNDED-AND-AUTHORIZED-FOR-KUCOINFUTURES
 
-python3 engine_probes.py cross_venue_smoketest \
-  --long_spec=binance:XRP/USDT:USDT --short_spec=bybit:XRP/USDT:USDT \
-  --I-AM-FUNDED-AND-AUTHORIZED-FOR-BINANCE --I-AM-FUNDED-AND-AUTHORIZED-FOR-BYBIT
+python3 engine_probes.py cross_venue_smoketest --long_spec=binance:XRP/USDT:USDT --short_spec=bybit:XRP/USDT:USDT --I-AM-FUNDED-AND-AUTHORIZED-FOR-BINANCE --I-AM-FUNDED-AND-AUTHORIZED-FOR-BYBIT
 ```
 
 The `--I-AM-FUNDED-AND-AUTHORIZED-FOR-{VENUE}` handshake is deliberate friction — Class 3 probes refuse to run without it.
@@ -392,7 +388,7 @@ The `--I-AM-FUNDED-AND-AUTHORIZED-FOR-{VENUE}` handshake is deliberate friction 
 | Per-venue funding-rate field maps | `../Arb-Scanalytics/FIELD_NOTES.md` |
 | Probe outputs (forensic JSON) | `probe_logs/` |
 
-CLI ack on completion: `filled_base=X/Y | halt_reason=Z | realized_basis_bps=…` (+ `remaining_base=R` for exits). Non-zero exit on engine errors / connection failures — safe to chain in scripts.
+CLI acknowledgment on completion: `filled_base=X/Y | halt_reason=Z | realized_basis_bps=…` (plus `remaining_base=R` for exits). Non-zero exit on engine errors or connection failures — safe to chain in scripts.
 
 ---
 
@@ -407,6 +403,6 @@ CLI ack on completion: `filled_base=X/Y | halt_reason=Z | realized_basis_bps=…
 - **Cycle-invariant halt is the safety net.** After dispatch + recovery, both legs must be symmetric within the smaller leg's min-lot tolerance, or the loop halts (`asymmetric_residual` + Pushover P2).
 - **Receipt-captured fees are NOT trusted by pnl.py.** Engine writes whatever fees come naturally; pnl.py always re-fetches via `fetch_my_trades`. Per-venue receipt fee shapes vary unpredictably (htx negative sign, bitmart base-coin currency, xt None values, etc.). Engine stays fast; pnl.py owns interpretation.
 - **Composite per-cycle floor.** `max(both legs' min-lot, max(both legs' min-notional)/mid)` ceil-rounded to the next snap step. Used by halt-on-dust threshold AND `min_dispatch_base` AND recovery's target-leg dust check.
-- **Symmetric snap before dispatch.** Each cycle's slice is snapped to the largest base qty that survives precision-rounding identically on BOTH legs. Avoids asymmetric fills from divergent leg precisions (e.g. KuCoin contract_size=10 vs OKX contract_size=100).
+- **Symmetric snap before dispatch.** Each cycle's slice is snapped to the largest base quantity that survives precision-rounding identically on BOTH legs. Avoids asymmetric fills from divergent leg precisions (for example, KuCoin contract_size=10 versus OKX contract_size=100).
 - **Run pnl.py within ~24h of trade close.** KuCoin's `fetch_my_trades` retention is short. Mutated `closed_trades.json` is then idempotent for subsequent runs.
 - **Singapore VPS for production.** Every venue 451s/`ExchangeNotAvailable`s on non-Asian residential IPs. Dev from non-Asia needs NordVPN-Singapore.
