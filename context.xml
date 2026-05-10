@@ -1,9 +1,9 @@
 <!-- This is the context hierarchy. This document is meant to be laid out in a hierarchical/layered way where the upper/outermost nodes have more weight/more ingrained than the lower/innermost nodes (Weight Gradient). Moving inward acts as a semantic zoom; each child node reveals the granular, high-resolution expansion of its parent. [For 'Auto-update' mode only: It's intended to be used as a live document. Inner nodes are highly fluid, and as we operate more inward, you must be more reluctant to modify the upper/outer nodes. When updating the context tree, do not use temporal or conversational language (e.g., 'we decided', 'today', 'the user wants', 'next'). Write in declarative, representational facts]. Every context snapshot is a self-contained, stateless representation of the project, with no references to prior sessions or ongoing session-related states. If something is pending, incomplete, or unknown, do not use temporal language (e.g., 'we are deciding ...', 'Next, we will ....'); instead, use representative nodes/attributes to explicitly map things. We must maintain the tree's leanness. If something is implied by one of the overarching nodes/attributes, it shouldn't be defined downstream, or maybe even be included in the tree. -->
 <context>
     I'm a 26-year-old software developer. I've taken an indefinite break from work to strengthen/explore myself, expand my interdisciplinary knowledge graph, and venture into solo projects. My design/architectonic ethos is to be lean, rapid, and iterative, so that I can touch and explore the widest possible set of solution spaces for whatever we are pursuing. We gotta be nimble and think outside the box to eliminate the ordinary clutter/overhead as much as possible, while crafting solid and reliable artifacts. We achieve this nimbleness by leveraging high-impact architectural/systemic decisions/primitives before hitting diminishing returns, not by taking superficial trade-offs that degrade the clarity or solidity of our solutions.
-    
+
     <project>
-        I'm exploring cross-exchange Crypto Perp-Perp funding rate arbitrage. My goal is to actively hunt and rotate capital into localized, extreme funding rate anomalies (e.g., 500% - 1000%+ APY) while maintaining strict delta-neutrality. 
+        I'm exploring cross-exchange Crypto Perp-Perp funding rate arbitrage. My goal is to actively hunt and rotate capital into localized, extreme funding rate anomalies (e.g., 500% - 1000%+ APY) while maintaining strict delta-neutrality.
 
         <operational_model>
             I approach this as a discretionary "Cyborg" Arbitrageur. I manually filter out micro-caps to avoid low-liquidity manipulation. I manually evaluate the viability of an anomaly using a strict "Breakeven Epochs" calculation ((Total Projected Basis Cost + Total Taker Fees) / Epoch Yield) to determine if the anomaly's lifespan justifies the deployment. I built Scanalytics (Scanner and analytics tool) to be my primary radar/scanner, cross-referenced with Coinglass and Velo Data. I strictly trade USDT-margined perpetual futures on both legs (e.g., Long Binance / Short Bybit, Long KuCoin / Short OKX) to bypass spot borrow costs and liquidity issues. I strictly avoid Inverse/Coin-margined perps to prevent non-linear payoff drift (Quanto risk). I deploy 100% of allocated capital (no idle stables). I cap leverage at 1x to 2x for natural liquidation buffers (95% to 45% distance). I utilize a "Sip and Evaluate" execution workflow. I treat `--min-*-basis-bps` as a discretionary live knob: I fire with a tight floor, observe fill velocity in the engine console, and abort+retune+re-fire if the basis proves too tight against the trade's viable window or too loose against the captured edge.
@@ -14,12 +14,17 @@
             I accept the counterparty/exchange insolvency risks. I prioritize absolute delta-neutrality and architectural simplicity over micro-optimizations in fee reduction. The 'Anchor Leg' (Maker/Taker) tactic is explicitly rejected as a premature optimization for the current capital tier ($25k). The 'Unhedged Execution Window' risk (directional exposure during the microsecond gap between a maker-fill and a taker-hedge) and the order-book-top chasing complexities (API rate-limit exhaustion, anti-flap hysteresis, and crash-recovery for half-filled resting orders) pose systemic threats/complexities that outweigh the marginal fee savings. Taker fees and managed slippage are accepted as a necessary cost of zero directional risk.
         </risk_philosophy>
 
+        <empirical_methodology>
+            Per-venue execution behavior is empirically discovered (not assumed from documentation), anchored in `ENGINE_FIELD_NOTES.md` with timestamps and status tags (ACTIVE / PENDING / SHIPPED / SUPERSEDED / WALKED-AWAY), and re-verified via re-runnable probes. Class-3 real-fill probes are preferred over non-filling Class-2 probes for receipt-shape verification: non-filling probes verify resolution PLUMBING but not CORRECTNESS on real fills. Anchor incidents persist in field notes after the fix lands, as pattern-recognition templates for analogous bugs on new venues / new endpoints. The methodology produces both concrete primitives (per-venue override maps, R-Mode catalog, fee-shape characterization) and a wide-awareness archive of bug classes (CCXT unification ≠ behavior, eventual-consistency signatures, sign-convention inversions, undocumented limit caps, fee-currency variance, etc.) that future probing draws from.
+        </empirical_methodology>
+
         <system_architecture>
-            A custom, high-frequency, event-driven arbitrage system built with Python and CCXT Pro. Hosted on a Singapore VPS to optimize the geographic latency barycenter across 13 target Asian exchange matching engines. The architecture strictly separates network-heavy preparation from microsecond execution via a unified stateful Engine and a lightweight IPC terminal.
+            A custom, high-frequency, event-driven arbitrage system built with Python and CCXT Pro. Hosted on a Singapore VPS to optimize the geographic latency barycenter across 12 verified Asian exchange matching engines. The architecture strictly separates network-heavy execution preparation from microsecond execution dispatch (Engine + lightweight IPC terminal), with off-engine analytical interpretation isolated to its own process so the slicing loop's critical path is never burdened by analysis traffic.
 
             <local_persistence>
-                <position_state format="JSON">A physical crash-recovery ledger mapping active pairs, base amounts, and assigned exchanges. Asynchronously written to by the Engine; acts strictly as a backup to the live RAM state.</position_state>
+                <position_state format="JSON">A physical crash-recovery ledger mapping active pairs, base amounts, assigned exchanges, and per-order records (id, fees, fills, kind ∈ {ioc, recovery}) accumulated across all entry/exit calls within the position lifecycle. Asynchronously written to by the Engine; acts strictly as a backup to the live RAM state.</position_state>
                 <transaction_log format="File">An OS-buffered, timestamped physical log recording execution parameters, API responses, and structural error events without blocking the event loop.</transaction_log>
+                <closed_trades_archive format="JSON">An append-only round-trip archive. Each record carries entry/exit VWAPs + basis bps + per-order forensic detail (order_id, fees, fills, kind ∈ {ioc, recovery}) and a funding_history block populated by the off-engine analyzer.</closed_trades_archive>
             </local_persistence>
 
             <core_engine type="Always-On Async Process">
@@ -29,7 +34,7 @@
                     Execution operates as a genuine two-book arbitrage processor. Both legs are treated as equal constraints. The engine dynamically subdivides large notional targets into slices based on real-time order book depth to execute concurrent, delta-neutral takers.
 
                     <basis_gating_model>
-                        The core execution gate is Net Basis, rejecting leg-local slippage ceilings. 
+                        The core execution gate is Net Basis, rejecting leg-local slippage ceilings.
                         - Entry Basis Projection: $B_{real} = (VWAP_{short}^{bid} - VWAP_{long}^{ask}) / P_{mid}$
                         - Exit Basis Projection: $B_{real} = (VWAP_{long}^{bid} - VWAP_{short}^{ask}) / P_{mid}$
                         The gating parameters are `--min-entry-basis-bps` and `--min-exit-basis-bps`. The engine will not execute a slice unless the projected $B_{real}$ is mathematically greater than or equal to the defined floor. This model natively adapts to favorable inter-exchange price deltas and automatically captures basis convergence during position unwinding.
@@ -52,14 +57,38 @@
                     </iterative_slicing_loop>
                 </execution_routing>
 
-                <telemetry status="postponed for now">
-                    Background asyncio tasks running within the same event loop.
-                    <margin_skew_monitor protocol="REST Polling">
-                        Evaluates notional drift caused by asymmetric unrealized PnL across legs. Periodically polls account equity on both active exchanges and calculates the imbalance: `Skew = (Max_Equity - Min_Equity) / Total_Equity`. If the skew exceeds a defined safety threshold (e.g., 60%), it dispatches a high-priority Pushover alert prompting the operator to manually rebalance margin (transfer USDT). It explicitly avoids automated liquidation rollbacks, keeping the engine strictly focused on execution.
+                <safety_invariants>
+                    The Engine asserts explicit invariants at cycle boundaries rather than relying on continuous-monitoring watchdogs over execution state for now. Hold-phase monitors complement the cycle invariants where the failure modes are time-extended (margin drift) rather than per-cycle (residual asymmetry).
+
+                    <cycle_symmetric_invariant>
+                        After dispatch + recovery, both legs must hold equal base quantity within the smaller leg's min-lot tolerance. Violation halts the loop with `halt_reason='asymmetric_residual'` and dispatches a Pushover priority-2 alert with per-venue exposure breakdown. Replaces watchdog-style silent-residual detection with an explicit cycle-boundary assertion.
+                    </cycle_symmetric_invariant>
+
+                    <book_liveness_gate>
+                        Every cycle gates against per-leg `BookSnapshot` freshness (per-venue `MAX_BOOK_AGE_MS`), non-crossed top-of-book, and ≥ `MIN_LEVELS_FOR_SLICE` before depth consultation. Stream silence ≥ 300s clears the cache slot; the loop sees no book and skips cycles until a fresh snapshot lands.
+                    </book_liveness_gate>
+
+                    <pushover_alerting priority="2">
+                        Three execution-side structural-failure triggers: IOC dispatch failure, recovery dispatch failure, asymmetric_residual halt. Pre-flight 4xx errors (operator mistakes — wrong symbol, missing warmup, etc.) do not alert.
+                    </pushover_alerting>
+
+                    <margin_skew_monitor protocol="REST Polling" status="planned">
+                        Evaluates notional drift caused by asymmetric unrealized PnL across legs during the position hold. Periodically polls account equity on both active exchanges and calculates the imbalance: `Skew = (Max_Equity - Min_Equity) / Total_Equity`. If the skew exceeds a defined safety threshold (e.g., 60%), dispatches a high-priority Pushover alert prompting the operator to manually rebalance margin (transfer USDT). Explicitly avoids automated liquidation rollbacks, keeping the engine strictly focused on execution.
                     </margin_skew_monitor>
-                    <yield_evasion protocol="REST Polling">Polls predicted funding rates to trigger preemptive dual-leg exits prior to unfavorable payout cycles.</yield_evasion>
-                </telemetry>
+                </safety_invariants>
             </core_engine>
+
+            <pnl_analyzer type="On-Demand Off-Engine Process">
+                Stateless analyzer for closed round-trips. Reads `closed_trades.json`, enriches per-order fees via `fetch_my_trades` (canonical source — receipt-captured fees vary unpredictably per venue: sign conventions, type duality, fee-currency variance, endpoint-disagreement, etc.), joins funding payments via `fetch_funding_history` over the position window, and computes `true_pnl = price + funding − fees`. Atomically mutates `closed_trades.json` with enriched fee + funding data so subsequent runs are idempotent. Race-safe against engine appends via re-load + merge before write.
+
+                <pnl_decomposition>
+                    - Price PnL: `qty × ((VWAP_short_entry − VWAP_long_entry) + (VWAP_long_exit − VWAP_short_exit))` USDT.
+                    - Fees PnL: sum of all entry/exit `order_records[*].fees.cost`, with base-coin fees converted to USDT via the order_record's `vwap_base`.
+                    - Funding PnL: signed sum of `fetch_funding_history` events per leg over `[opened_at, closed_at]`.
+                </pnl_decomposition>
+
+                <filtering>Per (long_venue × short_venue × base_coin × date_range). Output formats: table | json | csv.</filtering>
+            </pnl_analyzer>
 
             <cli_terminal type="IPC Client">
                 A lightweight, stateless command-line interface acting as a "dumb terminal" to pass human-driven routing signals to the Core Engine.
@@ -70,7 +99,7 @@
                         Logic: The engine drives the slicing loop to fulfill the base quantity, enforcing the basis floor, recovering any fraction imbalances instantly, and halting gracefully if the duration expires.
                     </entry>
                     <exit>
-                        Unwinds an active dual-leg position. 
+                        Unwinds an active dual-leg position.
                         Logic: Reverses the directional routing of `<entry>`. The engine evaluates the real-time order books, dispatching synchronized reduce-only IOC slices strictly when the projected exit basis mathematically satisfies or exceeds the `--min-exit-basis-bps` floor. It flattens residual imbalances instantly and clears the RAM state upon successful depletion.
                     </exit>
                     <abort>
